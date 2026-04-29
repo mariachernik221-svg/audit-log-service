@@ -19,33 +19,37 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/audit-events")
 public class AuditEventController {
 
-    private final AuditEventService service;
+  private final AuditEventService service;
 
-    public AuditEventController(AuditEventService service) {
-        this.service = service;
-    }
+  public AuditEventController(AuditEventService service) {
+    this.service = service;
+  }
 
-    @PostMapping
-    public ResponseEntity<AuditEventResponse> create(@Valid @RequestBody CreateAuditEventRequest request) {
-        AuditEvent created = service.create(
-                request.actor(),
-                request.action(),
-                request.resource(),
-                request.outcome(),
-                request.context());
-        AuditEventResponse body = AuditEventResponse.from(created);
-        return ResponseEntity.created(URI.create("/audit-events/" + created.getId())).body(body);
-    }
+  @PostMapping
+  public ResponseEntity<AuditEventResponse> create(
+      @Valid @RequestBody CreateAuditEventRequest request) {
+    AuditEvent created =
+        service.create(
+            request.actor(),
+            request.action(),
+            request.resource(),
+            request.outcome(),
+            request.context());
+    AuditEventResponse body = AuditEventResponse.from(created);
+    return ResponseEntity.created(URI.create("/audit-events/" + created.getId())).body(body);
+  }
 
-    @GetMapping
-    public List<AuditEventResponse> search(
-            @RequestParam(required = false) String actor,
-            @RequestParam(required = false) String resource,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+  @GetMapping
+  public List<AuditEventResponse> search(
+      @RequestParam(required = false) String actor,
+      @RequestParam(required = false) String resource,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          Instant from,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          Instant to) {
 
-        return service.search(actor, resource, from, to).stream()
-                .map(AuditEventResponse::from)
-                .toList();
-    }
+    return service.search(actor, resource, from, to).stream()
+        .map(AuditEventResponse::from)
+        .toList();
+  }
 }

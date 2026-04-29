@@ -17,46 +17,66 @@ import org.hibernate.type.SqlTypes;
 @Table(name = "audit_events")
 public class AuditEvent {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.UUID)
+  private UUID id;
 
-    @Column(nullable = false, updatable = false)
-    private Instant timestamp;
+  @Column(nullable = false, updatable = false)
+  private Instant timestamp;
 
-    @Column(nullable = false, updatable = false)
-    private String actor;
+  @Column(nullable = false, updatable = false)
+  private String actor;
 
-    @Column(nullable = false, updatable = false)
-    private String action;
+  @Column(nullable = false, updatable = false)
+  private String action;
 
-    @Column(nullable = false, updatable = false)
-    private String resource;
+  @Column(nullable = false, updatable = false)
+  private String resource;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, updatable = false)
-    private Outcome outcome;
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, updatable = false)
+  private Outcome outcome;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(columnDefinition = "jsonb", updatable = false)
-    private String context;
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(columnDefinition = "jsonb", updatable = false)
+  private String context;
 
-    protected AuditEvent() {}
+  protected AuditEvent() {}
 
-    public AuditEvent(String actor, String action, String resource, Outcome outcome, String context) {
-        this.timestamp = Instant.now();
-        this.actor = actor;
-        this.action = action;
-        this.resource = resource;
-        this.outcome = outcome;
-        this.context = context;
-    }
+  public AuditEvent(String actor, String action, String resource, Outcome outcome, String context) {
+    this.timestamp = Instant.now();
+    this.actor = actor;
+    this.action = action;
+    this.resource = resource;
+    this.outcome = outcome;
+    this.context = context;
+  }
 
-    public UUID getId() { return id; }
-    public Instant getTimestamp() { return timestamp; }
-    public String getActor() { return actor; }
-    public String getAction() { return action; }
-    public String getResource() { return resource; }
-    public Outcome getOutcome() { return outcome; }
-    public String getContext() { return context; }
+  public UUID getId() {
+    return id;
+  }
+
+  public Instant getTimestamp() {
+    return timestamp;
+  }
+
+  public String getActor() {
+    return actor;
+  }
+
+  public String getAction() {
+    return action;
+  }
+
+  public String getResource() {
+    return resource;
+  }
+
+  public Outcome getOutcome() {
+    return outcome;
+  }
+
+  public String getContext() {
+    return context;
+  }
 }

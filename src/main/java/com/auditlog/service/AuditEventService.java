@@ -7,7 +7,7 @@ import java.util.List;
 
 public interface AuditEventService {
 
-    AuditEvent create(String actor, String action, String resource, Outcome outcome, String context);
+  AuditEvent create(String actor, String action, String resource, Outcome outcome, String context);
 
-    List<AuditEvent> search(String actor, String resource, Instant from, Instant to);
+  List<AuditEvent> search(String actor, String resource, Instant from, Instant to);
 }

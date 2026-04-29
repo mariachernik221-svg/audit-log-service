@@ -11,11 +11,12 @@ import org.springframework.data.repository.query.Param;
 
 public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
 
-    AuditEvent save(AuditEvent event);
+  AuditEvent save(AuditEvent event);
 
-    Optional<AuditEvent> findById(UUID id);
+  Optional<AuditEvent> findById(UUID id);
 
-    @Query("""
+  @Query(
+      """
             select e from AuditEvent e
             where (cast(:actor    as string)            is null or e.actor    = :actor)
               and (cast(:resource as string)            is null or e.resource = :resource)
@@ -23,9 +24,9 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
               and (cast(:to       as java.time.Instant) is null or e.timestamp <  :to)
             order by e.timestamp desc
             """)
-    List<AuditEvent> search(
-            @Param("actor") String actor,
-            @Param("resource") String resource,
-            @Param("from") Instant from,
-            @Param("to") Instant to);
+  List<AuditEvent> search(
+      @Param("actor") String actor,
+      @Param("resource") String resource,
+      @Param("from") Instant from,
+      @Param("to") Instant to);
 }

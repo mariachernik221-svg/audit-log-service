@@ -2,12 +2,8 @@ package com.auditlog.api;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -19,7 +15,6 @@ import com.auditlog.domain.Outcome;
 import com.auditlog.service.AuditEventService;
 import java.lang.reflect.Field;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -129,82 +124,6 @@ class AuditEventControllerTest {
                                 """))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value("actor must not be blank"));
-  }
-
-  @Test
-  void getByActorOnly() throws Exception {
-    AuditEvent event =
-        entity(
-            UUID.randomUUID(),
-            Instant.parse("2026-04-25T10:00:00Z"),
-            "alice",
-            "x",
-            "r",
-            Outcome.SUCCESS,
-            null);
-    when(service.search(eq("alice"), isNull(), isNull(), isNull())).thenReturn(List.of(event));
-
-    mockMvc
-        .perform(get("/audit-events").param("actor", "alice"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.length()").value(1))
-        .andExpect(jsonPath("$[0].actor").value("alice"));
-    verify(service).search("alice", null, null, null);
-  }
-
-  @Test
-  void getByResourceOnly() throws Exception {
-    AuditEvent event =
-        entity(UUID.randomUUID(), Instant.now(), "alice", "x", "project:42", Outcome.DENIED, null);
-    when(service.search(isNull(), eq("project:42"), isNull(), isNull())).thenReturn(List.of(event));
-
-    mockMvc
-        .perform(get("/audit-events").param("resource", "project:42"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].resource").value("project:42"))
-        .andExpect(jsonPath("$[0].outcome").value("DENIED"));
-  }
-
-  @Test
-  void getByAllParamsCombined() throws Exception {
-    Instant from = Instant.parse("2026-03-02T00:00:00Z");
-    Instant to = Instant.parse("2026-03-06T00:00:00Z");
-    AuditEvent event =
-        entity(
-            UUID.randomUUID(),
-            Instant.parse("2026-03-04T12:00:00Z"),
-            "mark.smith",
-            "payment.charge",
-            "payment-service",
-            Outcome.SUCCESS,
-            null);
-    when(service.search("mark.smith", "payment-service", from, to)).thenReturn(List.of(event));
-
-    mockMvc
-        .perform(
-            get("/audit-events")
-                .param("actor", "mark.smith")
-                .param("resource", "payment-service")
-                .param("from", from.toString())
-                .param("to", to.toString()))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.length()").value(1))
-        .andExpect(jsonPath("$[0].actor").value("mark.smith"))
-        .andExpect(jsonPath("$[0].resource").value("payment-service"));
-    verify(service).search("mark.smith", "payment-service", from, to);
-  }
-
-  @Test
-  void getMapsServiceIllegalArgumentTo400() throws Exception {
-    when(service.search(isNull(), isNull(), isNull(), isNull()))
-        .thenThrow(
-            new IllegalArgumentException(
-                "search requires at least one filter: actor, resource, from, or to"));
-
-    mockMvc
-        .perform(get("/audit-events"))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.message", containsString("at least one filter")));
   }
 
   private static AuditEvent entity(

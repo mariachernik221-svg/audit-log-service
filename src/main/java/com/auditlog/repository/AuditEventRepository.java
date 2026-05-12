@@ -25,7 +25,7 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
             and e.timestamp <= :tStart
             and (cast(:lastTs as java.time.Instant) is null
                  or e.timestamp > :lastTs
-                 or (e.timestamp = :lastTs and e.id > cast(:lastId as java.util.UUID)))
+                 or (e.timestamp = :lastTs and e.id > :lastId))
           order by e.timestamp asc, e.id asc
           """)
   List<AuditEvent> searchAsc(
@@ -50,7 +50,7 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
             and e.timestamp <= :tStart
             and (cast(:lastTs as java.time.Instant) is null
                  or e.timestamp < :lastTs
-                 or (e.timestamp = :lastTs and e.id < cast(:lastId as java.util.UUID)))
+                 or (e.timestamp = :lastTs and e.id < :lastId))
           order by e.timestamp desc, e.id desc
           """)
   List<AuditEvent> searchDesc(

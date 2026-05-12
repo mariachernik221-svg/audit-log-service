@@ -16,14 +16,16 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
   @Query(
       """
           select e from AuditEvent e
-          where (cast(:actor    as string)            is null or lower(e.actor)    = lower(:actor))
-            and (cast(:resource as string)            is null or lower(e.resource) = lower(:resource))
+          where (cast(:actor    as string) is null
+                 or lower(e.actor)    = lower(cast(:actor    as string)))
+            and (cast(:resource as string) is null
+                 or lower(e.resource) = lower(cast(:resource as string)))
             and e.timestamp >= :from
             and e.timestamp <  :to
             and e.timestamp <= :tStart
             and (cast(:lastTs as java.time.Instant) is null
                  or e.timestamp > :lastTs
-                 or (e.timestamp = :lastTs and e.id > :lastId))
+                 or (e.timestamp = :lastTs and e.id > cast(:lastId as java.util.UUID)))
           order by e.timestamp asc, e.id asc
           """)
   List<AuditEvent> searchAsc(
@@ -39,14 +41,16 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
   @Query(
       """
           select e from AuditEvent e
-          where (cast(:actor    as string)            is null or lower(e.actor)    = lower(:actor))
-            and (cast(:resource as string)            is null or lower(e.resource) = lower(:resource))
+          where (cast(:actor    as string) is null
+                 or lower(e.actor)    = lower(cast(:actor    as string)))
+            and (cast(:resource as string) is null
+                 or lower(e.resource) = lower(cast(:resource as string)))
             and e.timestamp >= :from
             and e.timestamp <  :to
             and e.timestamp <= :tStart
             and (cast(:lastTs as java.time.Instant) is null
                  or e.timestamp < :lastTs
-                 or (e.timestamp = :lastTs and e.id < :lastId))
+                 or (e.timestamp = :lastTs and e.id < cast(:lastId as java.util.UUID)))
           order by e.timestamp desc, e.id desc
           """)
   List<AuditEvent> searchDesc(

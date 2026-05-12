@@ -1,10 +1,15 @@
 package com.auditlog.api;
 
 import com.auditlog.domain.AuditEvent;
+import com.auditlog.service.AuditEventQueryInput;
+import com.auditlog.service.AuditEventQueryResult;
 import com.auditlog.service.AuditEventService;
 import jakarta.validation.Valid;
 import java.net.URI;
+import java.util.List;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,5 +37,21 @@ public class AuditEventController {
             request.context());
     AuditEventResponse body = AuditEventResponse.from(created);
     return ResponseEntity.created(URI.create("/audit-events/" + created.getId())).body(body);
+  }
+
+  @GetMapping
+  public AuditEventPage search(@Valid @ModelAttribute AuditEventQueryRequest request) {
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            request.actor(),
+            request.resource(),
+            request.from(),
+            request.to(),
+            request.order(),
+            request.limit(),
+            request.cursor());
+    AuditEventQueryResult result = service.search(input);
+    List<AuditEventResponse> items = result.items().stream().map(AuditEventResponse::from).toList();
+    return new AuditEventPage(items, result.nextCursor());
   }
 }

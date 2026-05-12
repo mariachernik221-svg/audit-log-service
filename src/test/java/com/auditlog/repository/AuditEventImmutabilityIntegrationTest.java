@@ -27,7 +27,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class AuditEventImmutabilityIntegrationTest {
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>("postgres:17-alpine").withReuse(true);
 
   @DynamicPropertySource
   static void datasource(DynamicPropertyRegistry registry) {

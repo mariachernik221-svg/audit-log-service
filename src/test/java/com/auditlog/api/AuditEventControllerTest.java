@@ -1,9 +1,13 @@
 package com.auditlog.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -12,11 +16,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.auditlog.domain.AuditEvent;
 import com.auditlog.domain.Outcome;
+import com.auditlog.service.AuditEventQueryInput;
+import com.auditlog.service.AuditEventQueryResult;
 import com.auditlog.service.AuditEventService;
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
@@ -124,6 +132,147 @@ class AuditEventControllerTest {
                                 """))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value("actor must not be blank"));
+  }
+
+  @Test
+  void getReturnsPageWithItemsAndNextCursor() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items").isArray())
+        .andExpect(jsonPath("$.items.length()").value(0))
+        .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+  }
+
+  @Test
+  void getPreservesActorCaseWhenPassingToService() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("actor", "Alice"))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<AuditEventQueryInput> captor =
+        ArgumentCaptor.forClass(AuditEventQueryInput.class);
+    verify(service).search(captor.capture());
+    assertThat(captor.getValue().actor()).isEqualTo("Alice");
+  }
+
+  @Test
+  void getPreservesResourceCaseWhenPassingToService() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("resource", "Project:42"))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<AuditEventQueryInput> captor =
+        ArgumentCaptor.forClass(AuditEventQueryInput.class);
+    verify(service).search(captor.capture());
+    assertThat(captor.getValue().resource()).isEqualTo("Project:42");
+  }
+
+  @Test
+  void getReturnsEmptyPageWith200WhenServiceReturnsEmpty() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("actor", "nobody"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items").isArray())
+        .andExpect(jsonPath("$.items.length()").value(0))
+        .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+  }
+
+  @Test
+  void getMapsServiceIllegalArgumentTo400() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenThrow(new IllegalArgumentException("from must be before to"));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-30T00:00:00Z")
+                .param("to", "2026-04-01T00:00:00Z"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("from must be before to"));
+  }
+
+  @Test
+  void getRejectsMissingFromWith400() throws Exception {
+    mockMvc
+        .perform(get("/audit-events").param("to", "2026-04-30T00:00:00Z"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("from")));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsMissingToWith400() throws Exception {
+    mockMvc
+        .perform(get("/audit-events").param("from", "2026-04-01T00:00:00Z"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("to")));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsLimitBelowMinWith400() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("limit", "0"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("limit")));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsLimitAboveMaxWith400() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("limit", "501"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("limit")));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsUnknownOrderWith400() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("order", "sideways"))
+        .andExpect(status().isBadRequest());
+    verifyNoInteractions(service);
   }
 
   private static AuditEvent entity(

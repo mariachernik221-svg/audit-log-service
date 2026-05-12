@@ -3,17 +3,29 @@ package com.auditlog.service;
 import com.auditlog.domain.AuditEvent;
 import com.auditlog.domain.Outcome;
 import com.auditlog.repository.AuditEventRepository;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AuditEventServiceImpl implements AuditEventService {
 
-  private final AuditEventRepository repository;
+  private static final int DEFAULT_LIMIT = 50;
+  private static final Order DEFAULT_ORDER = Order.ASC;
+  private static final Duration MAX_WINDOW = Duration.ofDays(90);
 
-  public AuditEventServiceImpl(AuditEventRepository repository) {
+  private final AuditEventRepository repository;
+  private final CursorCodec cursorCodec;
+
+  public AuditEventServiceImpl(AuditEventRepository repository, CursorCodec cursorCodec) {
     this.repository = repository;
+    this.cursorCodec = cursorCodec;
   }
 
   @Override
@@ -27,9 +39,88 @@ public class AuditEventServiceImpl implements AuditEventService {
     return repository.save(new AuditEvent(actor, action, resource, outcome, context));
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  public AuditEventQueryResult search(AuditEventQueryInput input) {
+    Objects.requireNonNull(input, "input must not be null");
+
+    String actor = blankToNull(input.actor());
+    String resource = blankToNull(input.resource());
+    Order order = input.order() != null ? input.order() : DEFAULT_ORDER;
+    int limit = input.limit() != null ? input.limit() : DEFAULT_LIMIT;
+
+    Objects.requireNonNull(input.from(), "from must not be null");
+    Objects.requireNonNull(input.to(), "to must not be null");
+    if (!input.from().isBefore(input.to())) {
+      throw new IllegalArgumentException("from must be before to");
+    }
+    if (Duration.between(input.from(), input.to()).compareTo(MAX_WINDOW) > 0) {
+      throw new IllegalArgumentException("time window must not exceed 90 days");
+    }
+
+    Optional<CursorPosition> position;
+    Instant tStart;
+    if (input.cursor() != null && !input.cursor().isBlank()) {
+      CursorCodec.DecodedCursor decoded = cursorCodec.decode(input.cursor());
+      if (!Objects.equals(decoded.actor(), actor)
+          || !Objects.equals(decoded.resource(), resource)
+          || !Objects.equals(decoded.from(), input.from())
+          || !Objects.equals(decoded.to(), input.to())
+          || decoded.order() != order) {
+        throw new IllegalArgumentException("cursor does not match the current query");
+      }
+      position = Optional.of(new CursorPosition(decoded.ts(), decoded.id()));
+      tStart = decoded.tStart();
+    } else {
+      position = Optional.empty();
+      tStart = Instant.now();
+    }
+
+    AuditEventQuery query =
+        new AuditEventQuery(
+            actor, resource, input.from(), input.to(), order, limit, position, tStart);
+
+    Instant lastTs = query.position().map(CursorPosition::ts).orElse(null);
+    UUID lastId = query.position().map(CursorPosition::id).orElse(null);
+    Limit pageLimit = Limit.of(query.limit() + 1);
+
+    List<AuditEvent> raw =
+        query.order() == Order.ASC
+            ? repository.searchAsc(
+                query.actor(),
+                query.resource(),
+                query.from(),
+                query.to(),
+                query.tStart(),
+                lastTs,
+                lastId,
+                pageLimit)
+            : repository.searchDesc(
+                query.actor(),
+                query.resource(),
+                query.from(),
+                query.to(),
+                query.tStart(),
+                lastTs,
+                lastId,
+                pageLimit);
+
+    if (raw.size() > query.limit()) {
+      List<AuditEvent> items = List.copyOf(raw.subList(0, query.limit()));
+      AuditEvent last = items.get(items.size() - 1);
+      String nextCursor = cursorCodec.encode(last.getTimestamp(), last.getId(), query);
+      return new AuditEventQueryResult(items, nextCursor);
+    }
+    return new AuditEventQueryResult(raw, null);
+  }
+
   private static void requireNonBlank(String value, String name) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(name + " must not be blank");
     }
+  }
+
+  private static String blankToNull(String value) {
+    return (value == null || value.isBlank()) ? null : value;
   }
 }

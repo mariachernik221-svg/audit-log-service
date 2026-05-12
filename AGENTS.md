@@ -11,6 +11,10 @@ and observability. It is used by compliance officers, SREs, and security analyst
 * `service`: application layer. Orchestrates use cases, coordinates domain logic, and handles transactions.
 * `repository`: data access layer. Responsible for persistence and retrieval of entities from PostgreSQL.
 
+
+* `.specs/{feature}`: specifications for each feature, when working on specs agent should ask 5-7 questions for
+  requirements clarification. Specs are source of truth.
+
 ## Invariants
 
 * events append-only: no updates, no deletes
@@ -32,6 +36,7 @@ and observability. It is used by compliance officers, SREs, and security analyst
 * All logic related to storing should be placed in `repository` (SQL queries building, interaction with database, etc.)
 * All code should be covered with tests (unit or integration)
 * Do not add new libraries without strong necessity
+* Use deterministic sort with tiebreaker for any list endpoint
 
 ## Feedback Loop
 

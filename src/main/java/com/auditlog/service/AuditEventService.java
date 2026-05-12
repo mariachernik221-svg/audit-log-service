@@ -6,4 +6,6 @@ import com.auditlog.domain.Outcome;
 public interface AuditEventService {
 
   AuditEvent create(String actor, String action, String resource, Outcome outcome, String context);
+
+  AuditEventQueryResult search(AuditEventQueryInput input);
 }

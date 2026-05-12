@@ -3,6 +3,8 @@ package com.auditlog.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -10,8 +12,10 @@ import static org.mockito.Mockito.when;
 import com.auditlog.domain.AuditEvent;
 import com.auditlog.domain.Outcome;
 import com.auditlog.repository.AuditEventRepository;
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Limit;
 
 @ExtendWith(MockitoExtension.class)
 class AuditEventServiceImplTest {
@@ -115,7 +120,6 @@ class AuditEventServiceImplTest {
 
     assertThat(result.items()).isEmpty();
     assertThat(result.nextCursor()).isNull();
-    verifyNoInteractions(repository);
   }
 
   @Test
@@ -284,5 +288,146 @@ class AuditEventServiceImplTest {
 
   private static Instant asc(String date) {
     return Instant.parse(date + "T00:00:00Z");
+  }
+
+  @Test
+  void searchTrimsToLimitAndBuildsNextCursorWhenMoreThanLimit() {
+    Instant from = asc("2026-04-01");
+    Instant to = asc("2026-04-30");
+    AuditEvent e1 = event(asc("2026-04-10"));
+    AuditEvent e2 = event(asc("2026-04-11"));
+    AuditEvent e3 = event(asc("2026-04-12"));
+    when(repository.searchAsc(
+            isNull(),
+            isNull(),
+            eq(from),
+            eq(to),
+            any(Instant.class),
+            isNull(),
+            isNull(),
+            any(Limit.class)))
+        .thenReturn(List.of(e1, e2, e3));
+
+    AuditEventQueryResult result =
+        service.search(new AuditEventQueryInput(null, null, from, to, Order.ASC, 2, null));
+
+    assertThat(result.items())
+        .extracting(AuditEvent::getId)
+        .containsExactly(e1.getId(), e2.getId());
+    assertThat(result.nextCursor()).isNotNull();
+  }
+
+  @Test
+  void searchReturnsNullNextCursorWhenResultsFitWithinLimit() {
+    Instant from = asc("2026-04-01");
+    Instant to = asc("2026-04-30");
+    AuditEvent e1 = event(asc("2026-04-10"));
+    AuditEvent e2 = event(asc("2026-04-11"));
+    when(repository.searchAsc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
+        .thenReturn(List.of(e1, e2));
+
+    AuditEventQueryResult result =
+        service.search(new AuditEventQueryInput(null, null, from, to, Order.ASC, 2, null));
+
+    assertThat(result.items()).hasSize(2);
+    assertThat(result.nextCursor()).isNull();
+  }
+
+  @Test
+  void searchAscDispatchesToSearchAscAndRequestsLimitPlusOne() {
+    Instant from = asc("2026-04-01");
+    Instant to = asc("2026-04-30");
+    when(repository.searchAsc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
+        .thenReturn(List.of());
+
+    service.search(new AuditEventQueryInput(null, null, from, to, Order.ASC, 10, null));
+
+    ArgumentCaptor<Limit> limitCaptor = ArgumentCaptor.forClass(Limit.class);
+    verify(repository)
+        .searchAsc(any(), any(), any(), any(), any(), any(), any(), limitCaptor.capture());
+    assertThat(limitCaptor.getValue().max()).isEqualTo(11);
+  }
+
+  @Test
+  void searchDescDispatchesToSearchDesc() {
+    Instant from = asc("2026-04-01");
+    Instant to = asc("2026-04-30");
+    when(repository.searchDesc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
+        .thenReturn(List.of());
+
+    service.search(new AuditEventQueryInput(null, null, from, to, Order.DESC, 10, null));
+
+    verify(repository)
+        .searchDesc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class));
+  }
+
+  @Test
+  void searchPassesCursorPositionAndPropagatesTStartToRepository() {
+    Instant from = asc("2026-04-01");
+    Instant to = asc("2026-04-30");
+    Instant tStart = Instant.parse("2026-05-01T00:00:00Z");
+    Instant lastTs = asc("2026-04-15");
+    UUID lastId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+    AuditEventQuery prior =
+        new AuditEventQuery(
+            null, null, from, to, Order.ASC, 50, java.util.Optional.empty(), tStart);
+    String cursor = cursorCodec.encode(lastTs, lastId, prior);
+    when(repository.searchAsc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
+        .thenReturn(List.of());
+
+    service.search(new AuditEventQueryInput(null, null, from, to, Order.ASC, 50, cursor));
+
+    verify(repository)
+        .searchAsc(
+            isNull(),
+            isNull(),
+            eq(from),
+            eq(to),
+            eq(tStart),
+            eq(lastTs),
+            eq(lastId),
+            any(Limit.class));
+  }
+
+  @Test
+  void searchEncodesNextCursorUsingLastKeptRowAndPropagatedTStart() {
+    Instant from = asc("2026-04-01");
+    Instant to = asc("2026-04-30");
+    Instant tStart = Instant.parse("2026-05-01T00:00:00Z");
+    AuditEventQuery prior =
+        new AuditEventQuery(
+            null, null, from, to, Order.ASC, 50, java.util.Optional.empty(), tStart);
+    String inboundCursor = cursorCodec.encode(asc("2026-04-05"), UUID.randomUUID(), prior);
+    AuditEvent e1 = event(asc("2026-04-10"));
+    AuditEvent e2 = event(asc("2026-04-11"));
+    AuditEvent e3 = event(asc("2026-04-12"));
+    when(repository.searchAsc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
+        .thenReturn(List.of(e1, e2, e3));
+
+    AuditEventQueryResult result =
+        service.search(new AuditEventQueryInput(null, null, from, to, Order.ASC, 2, inboundCursor));
+
+    assertThat(result.nextCursor()).isNotNull();
+    CursorCodec.DecodedCursor decoded = cursorCodec.decode(result.nextCursor());
+    assertThat(decoded.ts()).isEqualTo(e2.getTimestamp());
+    assertThat(decoded.id()).isEqualTo(e2.getId());
+    assertThat(decoded.tStart()).isEqualTo(tStart);
+  }
+
+  private static AuditEvent event(Instant ts) {
+    AuditEvent event = new AuditEvent("alice", "x", "r", Outcome.SUCCESS, null);
+    setField(event, "id", UUID.randomUUID());
+    setField(event, "timestamp", ts);
+    return event;
+  }
+
+  private static void setField(Object target, String name, Object value) {
+    try {
+      Field f = AuditEvent.class.getDeclaredField(name);
+      f.setAccessible(true);
+      f.set(target, value);
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException(e);
+    }
   }
 }

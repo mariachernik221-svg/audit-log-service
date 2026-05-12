@@ -8,6 +8,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -78,12 +80,38 @@ public class AuditEventServiceImpl implements AuditEventService {
         new AuditEventQuery(
             actor, resource, input.from(), input.to(), order, limit, position, tStart);
 
-    // Repository wiring lands in T5. Stub returns an empty page.
-    return stubResult(query);
-  }
+    Instant lastTs = query.position().map(CursorPosition::ts).orElse(null);
+    UUID lastId = query.position().map(CursorPosition::id).orElse(null);
+    Limit pageLimit = Limit.of(query.limit() + 1);
 
-  private AuditEventQueryResult stubResult(AuditEventQuery query) {
-    return new AuditEventQueryResult(List.of(), null);
+    List<AuditEvent> raw =
+        query.order() == Order.ASC
+            ? repository.searchAsc(
+                query.actor(),
+                query.resource(),
+                query.from(),
+                query.to(),
+                query.tStart(),
+                lastTs,
+                lastId,
+                pageLimit)
+            : repository.searchDesc(
+                query.actor(),
+                query.resource(),
+                query.from(),
+                query.to(),
+                query.tStart(),
+                lastTs,
+                lastId,
+                pageLimit);
+
+    if (raw.size() > query.limit()) {
+      List<AuditEvent> items = List.copyOf(raw.subList(0, query.limit()));
+      AuditEvent last = items.get(items.size() - 1);
+      String nextCursor = cursorCodec.encode(last.getTimestamp(), last.getId(), query);
+      return new AuditEventQueryResult(items, nextCursor);
+    }
+    return new AuditEventQueryResult(raw, null);
   }
 
   private static void requireNonBlank(String value, String name) {

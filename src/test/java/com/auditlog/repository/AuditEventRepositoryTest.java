@@ -74,7 +74,9 @@ class AuditEventRepositoryTest {
     List<AuditEvent> result =
         repository.searchAsc(null, null, T0, T_FUTURE, T_FUTURE, null, null, BIG);
 
-    assertThat(result).extracting(AuditEvent::getId).containsExactly(a.getId(), b.getId(), c.getId());
+    assertThat(result)
+        .extracting(AuditEvent::getId)
+        .containsExactly(a.getId(), b.getId(), c.getId());
   }
 
   @Test
@@ -86,7 +88,9 @@ class AuditEventRepositoryTest {
     List<AuditEvent> result =
         repository.searchDesc(null, null, T0, T_FUTURE, T_FUTURE, null, null, BIG);
 
-    assertThat(result).extracting(AuditEvent::getId).containsExactly(c.getId(), b.getId(), a.getId());
+    assertThat(result)
+        .extracting(AuditEvent::getId)
+        .containsExactly(c.getId(), b.getId(), a.getId());
   }
 
   @Test
@@ -129,8 +133,7 @@ class AuditEventRepositoryTest {
     AuditEvent inside = save("alice", "r", T2);
     save("alice", "r", T3);
 
-    List<AuditEvent> result =
-        repository.searchAsc(null, null, T1, T3, T_FUTURE, null, null, BIG);
+    List<AuditEvent> result = repository.searchAsc(null, null, T1, T3, T_FUTURE, null, null, BIG);
 
     assertThat(result)
         .extracting(AuditEvent::getId)
@@ -142,8 +145,7 @@ class AuditEventRepositoryTest {
     AuditEvent inSnapshot = save("alice", "r", T1);
     save("alice", "r", T3);
 
-    List<AuditEvent> result =
-        repository.searchAsc(null, null, T0, T_FUTURE, T2, null, null, BIG);
+    List<AuditEvent> result = repository.searchAsc(null, null, T0, T_FUTURE, T2, null, null, BIG);
 
     assertThat(result).extracting(AuditEvent::getId).containsExactly(inSnapshot.getId());
   }
@@ -153,8 +155,7 @@ class AuditEventRepositoryTest {
     AuditEvent atBoundary = save("alice", "r", T2);
     save("alice", "r", T3);
 
-    List<AuditEvent> result =
-        repository.searchAsc(null, null, T0, T_FUTURE, T2, null, null, BIG);
+    List<AuditEvent> result = repository.searchAsc(null, null, T0, T_FUTURE, T2, null, null, BIG);
 
     assertThat(result).extracting(AuditEvent::getId).containsExactly(atBoundary.getId());
   }
@@ -169,9 +170,7 @@ class AuditEventRepositoryTest {
         repository.searchAsc(
             null, null, T0, T_FUTURE, T_FUTURE, first.getTimestamp(), first.getId(), BIG);
 
-    assertThat(result)
-        .extracting(AuditEvent::getId)
-        .containsExactly(second.getId(), third.getId());
+    assertThat(result).extracting(AuditEvent::getId).containsExactly(second.getId(), third.getId());
   }
 
   @Test
@@ -226,9 +225,7 @@ class AuditEventRepositoryTest {
         repository.searchDesc(
             null, null, T0, T_FUTURE, T_FUTURE, first.getTimestamp(), first.getId(), BIG);
 
-    assertThat(result)
-        .extracting(AuditEvent::getId)
-        .containsExactly(second.getId(), third.getId());
+    assertThat(result).extracting(AuditEvent::getId).containsExactly(second.getId(), third.getId());
   }
 
   @Test
@@ -247,13 +244,9 @@ class AuditEventRepositoryTest {
   void searchAscReturnsEmptyWhenNothingMatches() {
     save("alice", "r", T1);
 
-    assertThat(
-            repository.searchAsc(
-                "nobody", null, T0, T_FUTURE, T_FUTURE, null, null, BIG))
+    assertThat(repository.searchAsc("nobody", null, T0, T_FUTURE, T_FUTURE, null, null, BIG))
         .isEmpty();
-    assertThat(
-            repository.searchAsc(
-                null, "nothing", T0, T_FUTURE, T_FUTURE, null, null, BIG))
+    assertThat(repository.searchAsc(null, "nothing", T0, T_FUTURE, T_FUTURE, null, null, BIG))
         .isEmpty();
     assertThat(
             repository.searchAsc(

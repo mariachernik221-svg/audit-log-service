@@ -1,9 +1,11 @@
 package com.auditlog.api;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -124,6 +126,76 @@ class AuditEventControllerTest {
                                 """))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value("actor must not be blank"));
+  }
+
+  @Test
+  void getReturnsPageWithItemsAndNextCursor() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items").isArray())
+        .andExpect(jsonPath("$.items.length()").value(0))
+        .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsMissingFromWith400() throws Exception {
+    mockMvc
+        .perform(get("/audit-events").param("to", "2026-04-30T00:00:00Z"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("from")));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsMissingToWith400() throws Exception {
+    mockMvc
+        .perform(get("/audit-events").param("from", "2026-04-01T00:00:00Z"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("to")));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsLimitBelowMinWith400() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("limit", "0"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("limit")));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsLimitAboveMaxWith400() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("limit", "501"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().string(containsString("limit")));
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsUnknownOrderWith400() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("order", "sideways"))
+        .andExpect(status().isBadRequest());
+    verifyNoInteractions(service);
   }
 
   private static AuditEvent entity(

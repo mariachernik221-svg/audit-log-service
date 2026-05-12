@@ -1,8 +1,10 @@
 package com.auditlog.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -22,6 +24,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
@@ -141,6 +144,61 @@ class AuditEventControllerTest {
             get("/audit-events")
                 .param("from", "2026-04-01T00:00:00Z")
                 .param("to", "2026-04-30T00:00:00Z"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items").isArray())
+        .andExpect(jsonPath("$.items.length()").value(0))
+        .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+  }
+
+  @Test
+  void getPreservesActorCaseWhenPassingToService() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("actor", "Alice"))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<AuditEventQueryInput> captor =
+        ArgumentCaptor.forClass(AuditEventQueryInput.class);
+    verify(service).search(captor.capture());
+    assertThat(captor.getValue().actor()).isEqualTo("Alice");
+  }
+
+  @Test
+  void getPreservesResourceCaseWhenPassingToService() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("resource", "Project:42"))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<AuditEventQueryInput> captor =
+        ArgumentCaptor.forClass(AuditEventQueryInput.class);
+    verify(service).search(captor.capture());
+    assertThat(captor.getValue().resource()).isEqualTo("Project:42");
+  }
+
+  @Test
+  void getReturnsEmptyPageWith200WhenServiceReturnsEmpty() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("actor", "nobody"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.items").isArray())
         .andExpect(jsonPath("$.items.length()").value(0))

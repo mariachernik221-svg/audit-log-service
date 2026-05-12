@@ -170,6 +170,19 @@ class AuditEventServiceImplTest {
   }
 
   @Test
+  void searchAcceptsExactly90DayWindow() {
+    Instant from = Instant.parse("2026-01-01T00:00:00Z");
+    Instant to = from.plus(Duration.ofDays(90));
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(null, null, from, to, Order.ASC, 50, null);
+
+    AuditEventQueryResult result = service.search(input);
+
+    assertThat(result.items()).isEmpty();
+    assertThat(result.nextCursor()).isNull();
+  }
+
+  @Test
   void searchRejectsWindowLongerThan90Days() {
     Instant from = Instant.parse("2026-01-01T00:00:00Z");
     Instant to = from.plus(Duration.ofDays(91));

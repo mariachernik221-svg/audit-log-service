@@ -1,6 +1,8 @@
 package com.auditlog.api;
 
 import com.auditlog.domain.AuditEvent;
+import com.auditlog.service.AuditEventQueryInput;
+import com.auditlog.service.AuditEventQueryResult;
 import com.auditlog.service.AuditEventService;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -39,6 +41,17 @@ public class AuditEventController {
 
   @GetMapping
   public AuditEventPage search(@Valid @ModelAttribute AuditEventQueryRequest request) {
-    return new AuditEventPage(List.of(), null);
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            request.actor(),
+            request.resource(),
+            request.from(),
+            request.to(),
+            request.order(),
+            request.limit(),
+            request.cursor());
+    AuditEventQueryResult result = service.search(input);
+    List<AuditEventResponse> items = result.items().stream().map(AuditEventResponse::from).toList();
+    return new AuditEventPage(items, result.nextCursor());
   }
 }

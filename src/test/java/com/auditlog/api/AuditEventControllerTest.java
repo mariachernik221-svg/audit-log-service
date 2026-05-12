@@ -14,9 +14,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.auditlog.domain.AuditEvent;
 import com.auditlog.domain.Outcome;
+import com.auditlog.service.AuditEventQueryInput;
+import com.auditlog.service.AuditEventQueryResult;
 import com.auditlog.service.AuditEventService;
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -130,6 +133,9 @@ class AuditEventControllerTest {
 
   @Test
   void getReturnsPageWithItemsAndNextCursor() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
     mockMvc
         .perform(
             get("/audit-events")
@@ -139,7 +145,20 @@ class AuditEventControllerTest {
         .andExpect(jsonPath("$.items").isArray())
         .andExpect(jsonPath("$.items.length()").value(0))
         .andExpect(jsonPath("$.nextCursor").value(nullValue()));
-    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getMapsServiceIllegalArgumentTo400() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenThrow(new IllegalArgumentException("from must be before to"));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-30T00:00:00Z")
+                .param("to", "2026-04-01T00:00:00Z"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("from must be before to"));
   }
 
   @Test

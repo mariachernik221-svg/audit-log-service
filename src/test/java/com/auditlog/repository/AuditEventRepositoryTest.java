@@ -33,7 +33,8 @@ class AuditEventRepositoryTest {
   private static final Limit BIG = Limit.of(100);
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>("postgres:17-alpine").withReuse(true);
 
   @DynamicPropertySource
   static void datasource(DynamicPropertyRegistry registry) {
@@ -183,7 +184,7 @@ class AuditEventRepositoryTest {
 
     UUID firstId = result.get(0).getId();
     UUID secondId = result.get(1).getId();
-    assertThat(firstId).isLessThan(secondId);
+    assertThat(pgCompare(firstId, secondId)).isNegative();
     assertThat(List.of(firstId, secondId)).containsExactlyInAnyOrder(a.getId(), b.getId());
   }
 
@@ -192,8 +193,8 @@ class AuditEventRepositoryTest {
     AuditEvent a = save("alice", "r", T2);
     AuditEvent b = save("alice", "r", T2);
 
-    UUID smaller = a.getId().compareTo(b.getId()) < 0 ? a.getId() : b.getId();
-    UUID larger = a.getId().compareTo(b.getId()) < 0 ? b.getId() : a.getId();
+    UUID smaller = pgCompare(a.getId(), b.getId()) < 0 ? a.getId() : b.getId();
+    UUID larger = pgCompare(a.getId(), b.getId()) < 0 ? b.getId() : a.getId();
 
     List<AuditEvent> result =
         repository.searchAsc(null, null, T0, T_FUTURE, T_FUTURE, T2, smaller, BIG);
@@ -211,7 +212,7 @@ class AuditEventRepositoryTest {
 
     UUID firstId = result.get(0).getId();
     UUID secondId = result.get(1).getId();
-    assertThat(firstId).isGreaterThan(secondId);
+    assertThat(pgCompare(firstId, secondId)).isPositive();
     assertThat(List.of(firstId, secondId)).containsExactlyInAnyOrder(a.getId(), b.getId());
   }
 
@@ -258,6 +259,10 @@ class AuditEventRepositoryTest {
     AuditEvent event = new AuditEvent(actor, "x", resource, Outcome.SUCCESS, null);
     setTimestamp(event, ts);
     return repository.save(event);
+  }
+
+  private static int pgCompare(UUID a, UUID b) {
+    return a.toString().compareTo(b.toString());
   }
 
   private static void setTimestamp(AuditEvent event, Instant ts) {

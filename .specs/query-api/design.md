@@ -73,7 +73,7 @@ Layering per `AGENTS.md`.
   3. Resolve `T_start`: if cursor present → use `tStart` from cursor; else → `Instant.now()`.
   4. Call repository with `limit + 1`, passing `T_start` as upper bound alongside `from`/`to`.
   5. If result size > `limit`, trim and build `nextCursor` from the last kept row + the query + `T_start`; else `nextCursor = null`.
-- `CursorCodec` — `encode(ts, id, query, tStart)` / `decode(raw)`. JSON + base64url. No signing — all tampering paths end in `400`.
+- `CursorCodec` — `encode(ts, id, query)` / `decode(raw)`. The query already carries `tStart`, so it is encoded from there rather than passed as a separate argument. JSON + base64url. No signing — all tampering paths end in `400`.
 
 **`repository`**
 
@@ -84,7 +84,7 @@ List<AuditEvent> searchAsc(...);
 List<AuditEvent> searchDesc(...);
 ```
 
-`setMaxResults(limit + 1)` for next-page detection.
+Each method takes a `org.springframework.data.domain.Limit` parameter; the service passes `Limit.of(limit + 1)` for next-page detection.
 
 **Validation split**
 

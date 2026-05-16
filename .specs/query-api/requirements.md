@@ -10,13 +10,6 @@ Audit events are stored immutably but cannot currently be queried in a structure
 
 **As a** compliance officer, **I want to** find events for a specific actor within a time range, **so that** I can confirm whether an action took place during an audit.
 
-**AC:**
-- A user can retrieve events filtered by actor and a time range.
-- When no events match, the result is an HTTP 200 response with an empty result set (not a 4xx/5xx error).
-- A time range must always be provided; queries missing either the start or end of the range are rejected with HTTP 400.
-- Each returned event exposes the following fields: `id`, `timestamp`, `actor`, `action`, `resource`, `outcome`, and `context`.
-- Query endpoints are read-only: a successful or failed query performs no `INSERT`, `UPDATE`, or `DELETE` on the `audit_events` table.
-
 ### US-2: SRE reconstructs the timeline of actions on a resource
 
 **As an** SRE, **I want to** retrieve events for a specific resource within a time range, ordered by time, **so that** I can reconstruct what happened during an incident.

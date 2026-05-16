@@ -5,17 +5,22 @@ import sys
 from common import STOP_LOG_PATH
 from common import append_log
 from common import changed_features
+from common import emit_status
 from common import extract_fail_items
+from common import hashes_from_content_snapshot
 from common import nested_invocation
 from common import read_hook_payload
 from common import read_json
 from common import relative_repo_path
 from common import remove_file
+from common import restore_specs_for_features
 from common import run_spec_self_eval
 from common import snapshot_specs
 from common import state_file_path
-from common import stop_block_payload
 from common import utc_timestamp
+from common import write_json
+
+MAX_RETRIES = 3
 
 
 def build_failure_reason(feature: str, report_path: str, fail_items: list[str]) -> str:
@@ -59,20 +64,10 @@ def main() -> int:
     if nested_invocation():
         return 0
 
+    sys.stderr.write("[spec-self-eval-gate] started...\n")
     payload = read_hook_payload()
     session_id = str(payload.get("session_id") or "unknown-session")
     stop_hook_active = bool(payload.get("stop_hook_active") or False)
-
-    if stop_hook_active:
-        append_log(
-            STOP_LOG_PATH,
-            {
-                "finished_at": utc_timestamp(),
-                "session_id": session_id,
-                "outcome": "skipped_stop_hook_active",
-            },
-        )
-        return 0
 
     state_path = state_file_path(session_id)
     baseline = read_json(state_path)
@@ -84,16 +79,41 @@ def main() -> int:
                 "finished_at": utc_timestamp(),
                 "session_id": session_id,
                 "outcome": "skipped_missing_baseline",
+                "stop_hook_active": stop_hook_active,
             },
+        )
+        emit_status("[spec-self-eval-gate] skipped (no baseline snapshot)")
+        return 0
+
+    retry_count = int(baseline.get("retry_count", 0))
+    raw_files = baseline.get("files", {})
+    baseline_files = raw_files if isinstance(raw_files, dict) else {}
+    before_hashes = hashes_from_content_snapshot(baseline_files)
+    after = snapshot_specs()
+    features = changed_features(before_hashes, after)
+
+    if stop_hook_active and retry_count >= MAX_RETRIES:
+        restored = restore_specs_for_features(baseline_files, features)
+        remove_file(state_path)
+        append_log(
+            STOP_LOG_PATH,
+            {
+                "finished_at": utc_timestamp(),
+                "session_id": session_id,
+                "outcome": "reverted_max_retries",
+                "retry_count": retry_count,
+                "features": features,
+                "restored": restored,
+            },
+        )
+        emit_status(
+            f"[spec-self-eval-gate] max retries {MAX_RETRIES} reached — "
+            f"reverted {len(restored)} spec file(s) to baseline"
         )
         return 0
 
-    before = baseline.get("files", {})
-    after = snapshot_specs()
-    features = changed_features(before if isinstance(before, dict) else {}, after)
-    remove_file(state_path)
-
     if not features:
+        remove_file(state_path)
         append_log(
             STOP_LOG_PATH,
             {
@@ -102,6 +122,7 @@ def main() -> int:
                 "outcome": "pass_no_spec_changes",
             },
         )
+        emit_status("[spec-self-eval-gate] pass (no spec changes)")
         return 0
 
     blocking_reasons: list[str] = []
@@ -137,11 +158,22 @@ def main() -> int:
             "features": features,
             "feature_results": feature_results,
             "outcome": "blocked" if blocking_reasons else "pass",
+            "retry_count": retry_count,
         },
     )
 
     if blocking_reasons:
-        sys.stdout.write(stop_block_payload("\n\n".join(blocking_reasons)))
+        new_count = retry_count + 1
+        baseline["retry_count"] = new_count
+        write_json(state_path, baseline)
+        emit_status(
+            f"[spec-self-eval-gate] BLOCK ({len(features)} feature(s): {', '.join(features)}, retry {new_count}/{MAX_RETRIES})",
+            decision="block",
+            reason="\n\n".join(blocking_reasons),
+        )
+    else:
+        remove_file(state_path)
+        emit_status(f"[spec-self-eval-gate] pass ({len(features)} feature(s): {', '.join(features)})")
     return 0
 
 

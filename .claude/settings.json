@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:/Users/Mariya_Chernik/AppData/Local/Programs/Python/Python312/python.exe\" \"C:/training_projects/audit-log-service/.claude/hooks/01-user-prompt-submit-spec-snapshot.py\"",
+            "command": "python .claude/hooks/01-user-prompt-submit-spec-snapshot.py",
             "timeout": 600
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:/Users/Mariya_Chernik/AppData/Local/Programs/Python/Python312/python.exe\" \"C:/training_projects/audit-log-service/.claude/hooks/02-stop-spec-self-eval-gate.py\"",
+            "command": "python .claude/hooks/02-stop-spec-self-eval-gate.py",
             "timeout": 600
           }
         ]

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
 import subprocess
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -12,6 +13,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 CODEX_DIR = HOOKS_DIR.parent
 REPO_ROOT = CODEX_DIR.parent
 SPEC_ROOT = REPO_ROOT / ".specs"
+SPEC_TRACKED_FILES = frozenset({"requirements.md", "design.md", "tasks.md"})
 RUNTIME_ROOT = Path.home() / ".codex" / "memories" / "audit-log-service-hooks"
 STATE_DIR = RUNTIME_ROOT / "state"
 LOG_DIR = RUNTIME_ROOT / "logs"
@@ -102,10 +104,36 @@ def snapshot_specs() -> dict[str, str]:
 
     snapshot: dict[str, str] = {}
     for path in sorted(SPEC_ROOT.rglob("*")):
-        if path.is_file():
+        if path.is_file() and path.name in SPEC_TRACKED_FILES:
             rel_path = path.relative_to(SPEC_ROOT).as_posix()
             snapshot[rel_path] = sha256_file(path)
     return snapshot
+
+
+def snapshot_specs_with_content() -> dict[str, dict[str, str]]:
+    if not SPEC_ROOT.exists():
+        return {}
+
+    snapshot: dict[str, dict[str, str]] = {}
+    for path in sorted(SPEC_ROOT.rglob("*")):
+        if path.is_file() and path.name in SPEC_TRACKED_FILES:
+            rel_path = path.relative_to(SPEC_ROOT).as_posix()
+            data = path.read_bytes()
+            snapshot[rel_path] = {
+                "hash": hashlib.sha256(data).hexdigest(),
+                "content_b64": base64.b64encode(data).decode("ascii"),
+            }
+    return snapshot
+
+
+def hashes_from_content_snapshot(snapshot: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for path, entry in snapshot.items():
+        if isinstance(entry, dict) and "hash" in entry:
+            out[path] = str(entry["hash"])
+        elif isinstance(entry, str):
+            out[path] = entry
+    return out
 
 
 def feature_name_for_snapshot_path(relative_path: str) -> str | None:
@@ -124,8 +152,50 @@ def changed_features(before: dict[str, str], after: dict[str, str]) -> list[str]
     return sorted(feature for feature in features if feature)
 
 
-def expected_report_path(feature: str) -> Path:
-    return SPEC_ROOT / feature / f"eval-report-{date.today().isoformat()}.md"
+def restore_specs_for_features(
+    baseline: dict[str, dict[str, str]],
+    features: list[str],
+) -> list[str]:
+    restored: list[str] = []
+    feature_set = set(features)
+    baseline_paths = set(baseline.keys())
+
+    for rel_path, entry in baseline.items():
+        feature = feature_name_for_snapshot_path(rel_path)
+        if feature not in feature_set:
+            continue
+        if not isinstance(entry, dict) or "content_b64" not in entry:
+            continue
+        target = SPEC_ROOT / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(base64.b64decode(entry["content_b64"]))
+        restored.append(rel_path)
+
+    for path in sorted(SPEC_ROOT.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.name not in SPEC_TRACKED_FILES:
+            continue
+        rel_path = path.relative_to(SPEC_ROOT).as_posix()
+        feature = feature_name_for_snapshot_path(rel_path)
+        if feature not in feature_set:
+            continue
+        if rel_path not in baseline_paths:
+            try:
+                path.unlink()
+                restored.append(f"(removed) {rel_path}")
+            except OSError:
+                pass
+
+    return sorted(restored)
+
+
+def report_timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%SZ")
+
+
+def expected_report_path(feature: str, stamp: str) -> Path:
+    return SPEC_ROOT / feature / f"eval-report-{stamp}.md"
 
 
 def relative_repo_path(path: Path) -> str:
@@ -135,13 +205,14 @@ def relative_repo_path(path: Path) -> str:
         return path.as_posix()
 
 
-def build_eval_prompt(feature: str) -> str:
+def build_eval_prompt(feature: str, stamp: str) -> str:
     return (
         f"Run the repo-local `spec-self-eval` skill for feature `{feature}`.\n\n"
         "Requirements:\n"
         f"- Validate only `.specs/{feature}/`.\n"
         "- Follow `.codex/skills/spec-self-eval/SKILL.md` exactly.\n"
-        "- Overwrite the dated eval report in that feature folder.\n"
+        f"- Use `<current_timestamp>` = `{stamp}` for both the report filename and the report header — do not generate a different value.\n"
+        f"- Write the report to `.specs/{feature}/eval-report-{stamp}.md`, overwriting if it exists.\n"
         "- Do not edit any spec files or the checklist.\n"
         "- Final message: one sentence naming the report path.\n"
     )
@@ -150,7 +221,8 @@ def build_eval_prompt(feature: str) -> str:
 def run_spec_self_eval(feature: str) -> dict[str, Any]:
     ensure_runtime_dirs()
 
-    report_path = expected_report_path(feature)
+    stamp = report_timestamp()
+    report_path = expected_report_path(feature, stamp)
     prior_mtime_ns = report_path.stat().st_mtime_ns if report_path.exists() else None
     last_message_path = STATE_DIR / f"codex-exec-{safe_token(feature)}.txt"
     remove_file(last_message_path)
@@ -169,7 +241,7 @@ def run_spec_self_eval(feature: str) -> dict[str, Any]:
         str(REPO_ROOT),
         "-o",
         str(last_message_path),
-        build_eval_prompt(feature),
+        build_eval_prompt(feature, stamp),
     ]
 
     result = subprocess.run(

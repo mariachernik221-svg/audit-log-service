@@ -1,7 +1,7 @@
 ---
 name: spec-self-eval
-description: This skill should be used when the user asks to "evaluate a spec", "self-eval", "spec self evaluation", "run spec-self-eval", "validate spec", or invokes /spec-self-eval. It validates `.specs/<feature>/{requirements,design,tasks}.md` against the checklist `.specs/_eval-checklist.md` and writes a PASS / FAIL / WEAK report to `.specs/<feature>/eval-report-<current_date>.md`.
-version: 1.0.0
+description: This skill should be used when the user asks to "evaluate a spec", "self-eval", "spec self evaluation", "run spec-self-eval", "validate spec", or invokes /spec-self-eval. It validates `.specs/<feature>/{requirements,design,tasks}.md` against the bundled checklist `.codex/skills/spec-self-eval/references/_eval-checklist.md` and writes a PASS / FAIL / WEAK report to `.specs/<feature>/eval-report-<current_timestamp>.md`.
+version: 1.2.0
 ---
 
 # spec-self-eval
@@ -11,11 +11,11 @@ Validate a feature spec against the repo checklist and emit a dated report.
 ## Inputs
 
 - `<feature>` — feature directory name under `.specs/`. Required.
-- `<current_date>` — today's date in `YYYY-MM-DD` form. Use the date from the session's context (do not call any clock).
+- `<current_timestamp>` — UTC timestamp in `YYYY-MM-DD_HH-MM-SSZ` form (filesystem-safe). The invoking prompt supplies this verbatim; do not call any clock or change the format.
 
 ## Files read (in this exact order)
 
-1. `.specs/_eval-checklist.md` — list of checklist items.
+1. `.codex/skills/spec-self-eval/references/_eval-checklist.md` — list of checklist items, bundled with the skill.
 2. `.specs/<feature>/requirements.md`
 3. `.specs/<feature>/design.md`
 4. `.specs/<feature>/tasks.md`
@@ -24,7 +24,7 @@ If any of the four files is missing, abort and report which file is missing. Do 
 
 ## Procedure (deterministic)
 
-1. Parse `.specs/_eval-checklist.md`. Each top-level `-` bullet under `## Checklist for specs:` is one checklist item. Preserve their order and original wording verbatim as the `Item` column.
+1. Parse `.codex/skills/spec-self-eval/references/_eval-checklist.md`. Each top-level `-` bullet under `## Checklist for specs:` is one checklist item. Preserve their order and original wording verbatim as the `Item` column.
 2. For each checklist item, in order, assign exactly one verdict:
    - **PASS** — the spec files contain explicit, quotable evidence that satisfies the item.
    - **WEAK** — evidence exists but is partial, ambiguous, or only implicit.
@@ -38,17 +38,17 @@ If any of the four files is missing, abort and report which file is missing. Do 
 
 ## Output file
 
-Path: `.specs/<feature>/eval-report-<current_date>.md`
+Path: `.specs/<feature>/eval-report-<current_timestamp>.md`
 
 If the file already exists, overwrite it.
 
 ## Output format (exact)
 
 ```markdown
-# Spec evaluation report — <current_date>
+# Spec evaluation report — <current_timestamp>
 
 Target: `.specs/<feature>/` (`requirements.md`, `design.md`, `tasks.md`)
-Checklist: [`_eval-checklist.md`](./_eval-checklist.md)
+Checklist: `.codex/skills/spec-self-eval/references/_eval-checklist.md`
 
 ## Results
 
@@ -66,12 +66,12 @@ Checklist: [`_eval-checklist.md`](./_eval-checklist.md)
 Where:
 - `<N>` is the total number of checklist items.
 - `<P>` is the count of PASS verdicts.
-- The Checklist link path is `./_eval-checklist.md` because the report sits one level deeper than the checklist; render it exactly as shown.
+- The Checklist path is the repo-relative path to the bundled checklist; render it exactly as shown (no link).
 - Verdict cell is bold: `**PASS**`, `**WEAK**`, `**FAIL**`.
 
 ## Determinism rules
 
-- Same inputs → identical bytes out. No timestamps inside the body beyond `<current_date>`. No random ordering. No "today" lookups.
+- Same inputs → identical bytes out. The only variable content is `<current_timestamp>`, which is supplied by the invoking prompt — do not call a clock, do not regenerate, do not reformat.
 - Walk checklist items in source order. Walk spec files in the order listed above.
 - Quote evidence verbatim from the spec files; do not summarize with synonyms.
 

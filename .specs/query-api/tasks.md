@@ -190,6 +190,44 @@ Dependencies:
 Estimated size:
 - `L`
 
+## T8. Add multi-actor list support to the actor filter
+
+Implements:
+- [requirements.md](./requirements.md) - `US-1` AC2, AC3
+- [requirements.md](./requirements.md) - `US-3` AC6
+- [design.md](./design.md) - Section `2. API contract` (`actor` row, `400` trigger for > 10 distinct actors)
+- [design.md](./design.md) - Section `3. Query & pagination` (`IN`-list filter, cursor `actors` payload)
+- [design.md](./design.md) - Section `4. Data model & persistence` (existing index justification for the IN-list)
+- [design.md](./design.md) - Section `5. Component design` / `service` (normalization step)
+- [design.md](./design.md) - Section `5. Component design` / `Validation split`
+- [design.md](./design.md) - Section `6. Testing strategy`
+
+Work:
+- Accept `actor` as a raw comma-separated string at the API layer; pass it through unchanged to the service.
+- In the service, normalize the actor input: split on `,`, trim each element, drop blanks, lower-case, dedupe, sort. Empty result → no actor filter (`null` / empty list).
+- Enforce a normalized-size cap of 10; throw `IllegalArgumentException` (→ HTTP 400) when exceeded.
+- Replace the single-value `lower(actor) = lower(:actor)` repository predicate with `lower(actor) IN (:actors)`, applied only when the normalized actor list is non-empty.
+- Extend `CursorCodec` payload: rename `actor` to `actors` carrying the sorted lower-cased list; on decode, reject with `400` when the request's normalized actor list does not exactly equal the cursor's `actors`.
+- Update integration and unit tests to exercise multi-actor matching, normalization, cap rejection, and cursor-vs-request actor-list mismatch.
+
+Definition of done:
+- `?actor=a1,a2,a3` returns events whose actor matches any of the listed values, case-insensitive.
+- Lists containing whitespace, duplicates, or empty entries are normalized; the 10-cap is enforced on the normalized list.
+- Requests with more than 10 distinct actors after normalization fail with HTTP 400 via the existing `ApiExceptionHandler`.
+- The cursor binds the normalized actor list; reusing a cursor against a request with a different actor list fails with HTTP 400.
+- Single-actor (`?actor=a1`) behavior remains unchanged.
+- Unit tests cover normalization rules, cap rejection, IN-list dispatch, and cursor mismatch on actor list.
+- Integration tests cover the multi-actor happy path, the > 10-actor 400, and cursor mismatch on actor list.
+
+Dependencies:
+- `T1`
+- `T2`
+- `T3`
+- `T5`
+
+Estimated size:
+- `M`
+
 ## Suggested execution order
 
 1. `T1`
@@ -199,8 +237,10 @@ Estimated size:
 5. `T5`
 6. `T6`
 7. `T7`
+8. `T8`
 
 ## Notes
 
 - `T4` can be delivered in parallel with `T1`-`T3`, but `T7` should run only after the migration is in place.
+- `T8` extends the single-actor baseline; it touches `T1`, `T2`, `T3`, and `T5` artifacts and is best scheduled after the baseline query API is in place.
 - The previous simple read endpoint has already been removed; this work builds the query API from scratch rather than modifying an existing one.

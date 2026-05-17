@@ -33,6 +33,7 @@ Implements [`requirements.md`](./requirements.md).
   - First request of a query (no cursor): server sets `T_start = Instant.now()`.
   - Subsequent requests: server decodes `T_start` from the cursor and reuses it for every page of the same query.
   - Effect: events written after the first request are excluded from this query and only become visible to a *new* query. Implements `requirements.md` US-3 AC3.
+- Freshness (`requirements.md` US-1 AC3): a committed event with `timestamp <= T_start` is included in the result set on the very next query — read-after-commit visibility falls out of running the snapshot query at `READ COMMITTED` against the append-only table. No write-side buffering or async indexing is introduced.
 - Sort: `timestamp <order>, id <order>` — strict total order, deterministic.
 - Cursor payload (JSON, then base64url):
   ```

@@ -13,7 +13,9 @@ Audit events are stored immutably but cannot currently be queried in a structure
 **AC:**
 - A user can retrieve events filtered by actor and a time range.
 - When no events match, the result is an HTTP 200 response with an empty result set (not a 4xx/5xx error).
+- Freshness: an event is visible to a new query as soon as its write transaction has committed; no additional numeric latency guarantee is provided.
 - A time range must always be provided; queries missing either the start or end of the range are rejected with HTTP 400.
+- Time-range span is capped at 90 days (`to - from <= 90d`); requests above the cap are rejected with HTTP 400 (see `design.md` §2).
 - Each returned event exposes the following fields: `id`, `timestamp`, `actor`, `action`, `resource`, `outcome`, and `context`.
 - Query endpoints are read-only: a successful or failed query performs no `INSERT`, `UPDATE`, or `DELETE` on the `audit_events` table.
 
@@ -49,10 +51,5 @@ Audit events are stored immutably but cannot currently be queried in a structure
 - Bulk export, file downloads (CSV, etc.), or streaming/subscription delivery.
 - User interface or dashboard for browsing events.
 - Data retention, archival, or deletion policies.
-
-## Open questions
-
-1. Are there compliance or regulatory constraints (retention windows, jurisdictional rules) that this read API must observe but that are not yet captured?
-2. Should the API expose any "freshness" guarantee — i.e., how soon after an event is written must it be visible to a query?
-3. Are there expected query-volume or response-time SLOs that should be set as acceptance criteria rather than left to operational tuning?
-4. Should there be an upper bound on how far back in time a query may reach (e.g., to align with a retention policy or to protect performance)?
+- Compliance/jurisdictional rules — inherited from the retention policy owned outside this API.
+- Query-volume / response-time SLOs — left to operational tuning, not acceptance criteria.

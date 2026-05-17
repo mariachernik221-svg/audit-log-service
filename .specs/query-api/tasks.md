@@ -5,7 +5,7 @@ Estimated size scale: `S` = up to 0.5 day, `M` = 1-2 days, `L` = 2-3 days.
 ## T1. Add the paginated query endpoint and request/response types
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC1-AC4
+- [requirements.md](./requirements.md) - `US-1` AC1, AC2, AC4, AC6
 - [requirements.md](./requirements.md) - `US-2` AC1-AC3
 - [requirements.md](./requirements.md) - `US-3` AC1-AC2
 - [design.md](./design.md) - Section `1. Overview`
@@ -33,7 +33,7 @@ Estimated size:
 ## T2. Build the service-layer query model, semantic validation, and cursor codec
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC2-AC5
+- [requirements.md](./requirements.md) - `US-1` AC2, AC4, AC5, AC7
 - [requirements.md](./requirements.md) - `US-2` AC4-AC5
 - [requirements.md](./requirements.md) - `US-3` AC2-AC4
 - [design.md](./design.md) - Section `2. API contract` (`400` rules)
@@ -139,7 +139,7 @@ Estimated size:
 ## T6. Add controller and service automated tests for validation and contract behavior
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC2-AC4
+- [requirements.md](./requirements.md) - `US-1` AC2, AC4, AC5, AC6
 - [requirements.md](./requirements.md) - `US-2` AC2-AC5
 - [requirements.md](./requirements.md) - `US-3` AC1-AC4
 - [design.md](./design.md) - Section `6. Testing strategy` / `Unit (service)`
@@ -165,7 +165,7 @@ Estimated size:
 ## T7. Add integration coverage for filtering, ordering, and pagination invariants
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC1-AC5
+- [requirements.md](./requirements.md) - `US-1` AC1-AC7
 - [requirements.md](./requirements.md) - `US-2` AC1-AC5
 - [requirements.md](./requirements.md) - `US-3` AC1-AC5
 - [design.md](./design.md) - Section `6. Testing strategy` / `Integration`
@@ -175,6 +175,7 @@ Work:
 - Add integration tests for case-insensitive matches and all specified bad-request scenarios.
 - Add pagination invariant tests proving no duplicates and no gaps across pages, including same-timestamp rows.
 - Add a snapshot-boundary test: events appended after the first page of a cursor walk must not appear in any later page of that walk.
+- Add a freshness test: an event becomes visible to a brand-new query immediately after its write transaction commits.
 
 Definition of done:
 - Integration tests prove the endpoint is read-only and returns deterministic ordering across repeated identical queries.
@@ -201,6 +202,5 @@ Estimated size:
 
 ## Notes
 
-- Open questions from [requirements.md](./requirements.md) are not converted into implementation tasks because the design does not resolve them into concrete scope.
 - `T4` can be delivered in parallel with `T1`-`T3`, but `T7` should run only after the migration is in place.
 - The previous simple read endpoint has already been removed; this work builds the query API from scratch rather than modifying an existing one.

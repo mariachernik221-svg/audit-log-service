@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -17,9 +20,9 @@ SPEC_TRACKED_FILES = frozenset({"requirements.md", "design.md", "tasks.md"})
 RUNTIME_ROOT = Path.home() / ".codex" / "memories" / "audit-log-service-hooks"
 STATE_DIR = RUNTIME_ROOT / "state"
 LOG_DIR = RUNTIME_ROOT / "logs"
-CODEX_EXECUTABLE = Path(r"C:\Program Files\NodeJS\nodejs-20-10-0\codex.cmd")
 CAPTURE_LOG_PATH = LOG_DIR / "capture-spec-turn-start.jsonl"
 STOP_LOG_PATH = LOG_DIR / "stop-spec-self-eval.jsonl"
+NESTED_ENV_FLAG = "AUDIT_SPEC_HOOK_CODEX_NESTED"
 
 
 def ensure_runtime_dirs() -> None:
@@ -30,7 +33,7 @@ def ensure_runtime_dirs() -> None:
 def read_hook_payload() -> dict[str, Any]:
     raw = ""
     try:
-        raw = input_stream_text()
+        raw = sys.stdin.read()
     except Exception:
         return {}
     if not raw.strip():
@@ -42,10 +45,12 @@ def read_hook_payload() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def input_stream_text() -> str:
-    import sys
-
-    return sys.stdin.read()
+def emit_status(message: str, **extra: Any) -> None:
+    sys.stderr.write(message + "\n")
+    if not extra:
+        return
+    payload: dict[str, Any] = {"systemMessage": message, **extra}
+    sys.stdout.write(json.dumps(payload))
 
 
 def utc_timestamp() -> str:
@@ -56,8 +61,8 @@ def safe_token(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", value)
 
 
-def state_file_path(session_id: str, turn_id: str) -> Path:
-    return STATE_DIR / f"{safe_token(session_id)}__{safe_token(turn_id)}.json"
+def state_file_path(session_id: str) -> Path:
+    return STATE_DIR / f"{safe_token(session_id)}.json"
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -136,22 +141,6 @@ def hashes_from_content_snapshot(snapshot: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def feature_name_for_snapshot_path(relative_path: str) -> str | None:
-    parts = PurePosixPath(relative_path).parts
-    if len(parts) < 2:
-        return None
-    return parts[0]
-
-
-def changed_features(before: dict[str, str], after: dict[str, str]) -> list[str]:
-    features = {
-        feature_name_for_snapshot_path(path)
-        for path in sorted(set(before) | set(after))
-        if before.get(path) != after.get(path)
-    }
-    return sorted(feature for feature in features if feature)
-
-
 def restore_specs_for_features(
     baseline: dict[str, dict[str, str]],
     features: list[str],
@@ -190,6 +179,22 @@ def restore_specs_for_features(
     return sorted(restored)
 
 
+def feature_name_for_snapshot_path(relative_path: str) -> str | None:
+    parts = PurePosixPath(relative_path).parts
+    if len(parts) < 2:
+        return None
+    return parts[0]
+
+
+def changed_features(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    features = {
+        feature_name_for_snapshot_path(path)
+        for path in sorted(set(before) | set(after))
+        if before.get(path) != after.get(path)
+    }
+    return sorted(feature for feature in features if feature)
+
+
 def report_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%SZ")
 
@@ -206,16 +211,54 @@ def relative_repo_path(path: Path) -> str:
 
 
 def build_eval_prompt(feature: str, stamp: str) -> str:
+    report_rel = f".specs/{feature}/eval-report-{stamp}.md"
     return (
         f"Run the repo-local `spec-self-eval` skill for feature `{feature}`.\n\n"
+        "Inputs (use these verbatim — do not regenerate, do not substitute):\n"
+        f"- feature: {feature}\n"
+        f"- current_timestamp: {stamp}\n\n"
         "Requirements:\n"
         f"- Validate only `.specs/{feature}/`.\n"
         "- Follow `.codex/skills/spec-self-eval/SKILL.md` exactly.\n"
-        f"- Use `<current_timestamp>` = `{stamp}` for both the report filename and the report header — do not generate a different value.\n"
-        f"- Write the report to `.specs/{feature}/eval-report-{stamp}.md`, overwriting if it exists.\n"
+        f"- The output report MUST be a NEW file at exactly this path: `{report_rel}`. "
+        f"Do not write to or update any other `eval-report-*.md` file. Ignore older eval reports in the folder.\n"
+        f"- Use `{stamp}` (verbatim) as the report header timestamp.\n"
+        "- The workspace is writable. Do not refuse for sandbox reasons.\n"
         "- Do not edit any spec files or the checklist.\n"
-        "- Final message: one sentence naming the report path.\n"
+        f"- Final message: one sentence naming the report path `{report_rel}`.\n"
     )
+
+
+def resolve_codex_executable() -> str:
+    found = shutil.which("codex")
+    if found:
+        return found
+    return "codex"
+
+
+def _scan_eval_reports(feature: str) -> dict[Path, int]:
+    feature_dir = SPEC_ROOT / feature
+    if not feature_dir.exists():
+        return {}
+    return {
+        path: path.stat().st_mtime_ns
+        for path in feature_dir.glob("eval-report-*.md")
+        if path.is_file()
+    }
+
+
+def _pick_written_report(feature: str, before: dict[Path, int], expected: Path) -> Path:
+    after = _scan_eval_reports(feature)
+    new_or_modified = [
+        path for path, mtime in after.items()
+        if before.get(path) != mtime
+    ]
+    if not new_or_modified:
+        return expected
+    if expected in new_or_modified:
+        return expected
+    new_or_modified.sort(key=lambda p: after[p], reverse=True)
+    return new_or_modified[0]
 
 
 def run_spec_self_eval(feature: str) -> dict[str, Any]:
@@ -224,25 +267,27 @@ def run_spec_self_eval(feature: str) -> dict[str, Any]:
     stamp = report_timestamp()
     report_path = expected_report_path(feature, stamp)
     prior_mtime_ns = report_path.stat().st_mtime_ns if report_path.exists() else None
-    last_message_path = STATE_DIR / f"codex-exec-{safe_token(feature)}.txt"
+    before_reports = _scan_eval_reports(feature)
+    last_message_path = STATE_DIR / f"codex-exec-{safe_token(feature)}-{stamp}.txt"
     remove_file(last_message_path)
 
     command = [
-        str(CODEX_EXECUTABLE),
+        resolve_codex_executable(),
         "exec",
         "--ephemeral",
         "--disable",
         "hooks",
-        "-c",
-        'approval_policy="never"',
-        "-c",
-        'sandbox_mode="workspace-write"',
+        "--skip-git-repo-check",
+        "--dangerously-bypass-approvals-and-sandbox",
         "-C",
         str(REPO_ROOT),
         "-o",
         str(last_message_path),
         build_eval_prompt(feature, stamp),
     ]
+
+    env = os.environ.copy()
+    env[NESTED_ENV_FLAG] = "1"
 
     result = subprocess.run(
         command,
@@ -252,6 +297,7 @@ def run_spec_self_eval(feature: str) -> dict[str, Any]:
         encoding="utf-8",
         errors="replace",
         timeout=600,
+        env=env,
     )
 
     final_message = ""
@@ -259,6 +305,7 @@ def run_spec_self_eval(feature: str) -> dict[str, Any]:
         final_message = last_message_path.read_text(encoding="utf-8", errors="replace").strip()
         remove_file(last_message_path)
 
+    report_path = _pick_written_report(feature, before_reports, report_path)
     report_exists = report_path.exists()
     report_mtime_ns = report_path.stat().st_mtime_ns if report_exists else None
     report_updated = report_exists and (
@@ -281,19 +328,35 @@ def run_spec_self_eval(feature: str) -> dict[str, Any]:
     }
 
 
-FAIL_ROW_RE = re.compile(
-    r"^\|\s*\d+\s*\|\s*(.*?)\s*\|\s*\*\*(FAIL)\*\*\s*\|",
+BLOCKING_ROW_RE = re.compile(
+    r"^\|\s*\d+\s*\|\s*(.*?)\s*\|\s*\*\*(FAIL|WEAK)\*\*\s*\|",
     re.MULTILINE,
 )
-FAIL_BRACKET_RE = re.compile(r"^\[FAIL\]\s*(.+)$", re.MULTILINE)
+BLOCKING_BRACKET_RE = re.compile(r"^\[(FAIL|WEAK)\]\s*(.+)$", re.MULTILINE)
+BLOCKING_SUMMARY_RE = re.compile(
+    r"^\d+\s*/\s*\d+\s+PASS\.\s*(FAIL|WEAK)(?::|\s+on)?\s+item\s+\d+\s*(?::|—|-)\s*(.+)$",
+    re.MULTILINE,
+)
 
 
-def extract_fail_items(report_text: str) -> list[str]:
-    items = [match.group(1).strip() for match in FAIL_ROW_RE.finditer(report_text)]
+def extract_blocking_items(report_text: str) -> list[tuple[str, str]]:
+    items = [(match.group(2), match.group(1).strip()) for match in BLOCKING_ROW_RE.finditer(report_text)]
     if items:
         return items
-    return [match.group(1).strip() for match in FAIL_BRACKET_RE.finditer(report_text)]
+
+    items = [(match.group(1), match.group(2).strip()) for match in BLOCKING_BRACKET_RE.finditer(report_text)]
+    if items:
+        return items
+
+    return [(match.group(1), match.group(2).strip()) for match in BLOCKING_SUMMARY_RE.finditer(report_text)]
 
 
-def stop_block_payload(reason: str) -> str:
-    return json.dumps({"decision": "block", "reason": reason})
+def stop_block_payload(reason: str, message: str | None = None) -> str:
+    payload: dict[str, Any] = {"decision": "block", "reason": reason}
+    if message:
+        payload["systemMessage"] = message
+    return json.dumps(payload)
+
+
+def nested_invocation() -> bool:
+    return os.environ.get(NESTED_ENV_FLAG) == "1"

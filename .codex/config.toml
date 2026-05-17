@@ -1,5 +1,6 @@
 [features]
 hooks = true
+codex_hooks = true
 
 [hooks]
 
@@ -19,4 +20,4 @@ type = "command"
 command = "python .codex/hooks/02-stop-spec-self-eval-gate.py"
 commandWindows = "python .codex/hooks/02-stop-spec-self-eval-gate.py"
 timeout = 600
-statusMessage = "Spec hook: block stop on spec-self-eval FAIL"
+statusMessage = "Spec hook: block stop on spec-self-eval FAIL/WEAK"

@@ -316,6 +316,22 @@ class QueryApiIntegrationTest {
     assertThat(ids).doesNotContain(appendedAfter.getId().toString());
   }
 
+  @Test
+  void freshnessNewlyWrittenEventVisibleToNextQuery() throws Exception {
+    String actor = "actor-freshness";
+    Instant now = Instant.now();
+    Instant from = now.minusSeconds(3600);
+    Instant to = now.plus(java.time.Duration.ofDays(1));
+
+    AuditEvent justWritten = seed(actor, "r", now.minusSeconds(1));
+    flush();
+
+    Page page = fetchPage(actor, null, from, to, "ASC", 50, null);
+
+    List<String> ids = page.items().stream().map(m -> (String) m.get("id")).toList();
+    assertThat(ids).contains(justWritten.getId().toString());
+  }
+
   // -- helpers --
 
   private AuditEvent seed(String actor, String resource, Instant ts) {

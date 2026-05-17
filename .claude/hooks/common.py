@@ -286,18 +286,27 @@ def run_spec_self_eval(feature: str) -> dict[str, Any]:
     }
 
 
-FAIL_ROW_RE = re.compile(
-    r"^\|\s*\d+\s*\|\s*(.*?)\s*\|\s*\*\*(FAIL)\*\*\s*\|",
+BLOCKING_ROW_RE = re.compile(
+    r"^\|\s*\d+\s*\|\s*(.*?)\s*\|\s*\*\*(FAIL|WEAK)\*\*\s*\|",
     re.MULTILINE,
 )
-FAIL_BRACKET_RE = re.compile(r"^\[FAIL\]\s*(.+)$", re.MULTILINE)
+BLOCKING_BRACKET_RE = re.compile(r"^\[(FAIL|WEAK)\]\s*(.+)$", re.MULTILINE)
+BLOCKING_SUMMARY_RE = re.compile(
+    r"^\d+\s*/\s*\d+\s+PASS\.\s*(FAIL|WEAK)(?::|\s+on)?\s+item\s+\d+\s*(?::|\u2014|-)\s*(.+)$",
+    re.MULTILINE,
+)
 
 
-def extract_fail_items(report_text: str) -> list[str]:
-    items = [match.group(1).strip() for match in FAIL_ROW_RE.finditer(report_text)]
+def extract_blocking_items(report_text: str) -> list[tuple[str, str]]:
+    items = [(match.group(2), match.group(1).strip()) for match in BLOCKING_ROW_RE.finditer(report_text)]
     if items:
         return items
-    return [match.group(1).strip() for match in FAIL_BRACKET_RE.finditer(report_text)]
+
+    items = [(match.group(1), match.group(2).strip()) for match in BLOCKING_BRACKET_RE.finditer(report_text)]
+    if items:
+        return items
+
+    return [(match.group(1), match.group(2).strip()) for match in BLOCKING_SUMMARY_RE.finditer(report_text)]
 
 
 def nested_invocation() -> bool:

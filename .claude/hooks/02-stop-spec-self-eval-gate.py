@@ -6,7 +6,7 @@ from common import STOP_LOG_PATH
 from common import append_log
 from common import changed_features
 from common import emit_status
-from common import extract_fail_items
+from common import extract_blocking_items
 from common import hashes_from_content_snapshot
 from common import nested_invocation
 from common import read_hook_payload
@@ -23,12 +23,14 @@ from common import write_json
 MAX_RETRIES = 3
 
 
-def build_failure_reason(feature: str, report_path: str, fail_items: list[str]) -> str:
+def build_failure_reason(
+    feature: str, report_path: str, blocking_items: list[tuple[str, str]]
+) -> str:
     lines = [
-        f"`spec-self-eval` still has failing checklist items for `.specs/{feature}/`.",
+        f"`spec-self-eval` still has blocking checklist items for `.specs/{feature}/`.",
         "",
     ]
-    lines.extend(f"[FAIL] {item}" for item in fail_items)
+    lines.extend(f"[{status}] {item}" for status, item in blocking_items)
     lines.extend(
         [
             "",
@@ -130,22 +132,22 @@ def main() -> int:
     for feature in features:
         result = run_spec_self_eval(feature)
         report_path = relative_repo_path(result["report_path"])
-        fail_items = extract_fail_items(str(result["report_text"]))
+        blocking_items = extract_blocking_items(str(result["report_text"]))
         outcome = "pass"
 
         if int(result["returncode"]) != 0 or not bool(result["report_exists"]):
             outcome = "exec_error"
             blocking_reasons.append(build_exec_error_reason(feature, result))
-        elif fail_items:
-            outcome = "fail"
-            blocking_reasons.append(build_failure_reason(feature, report_path, fail_items))
+        elif blocking_items:
+            outcome = "fail" if any(status == "FAIL" for status, _ in blocking_items) else "weak"
+            blocking_reasons.append(build_failure_reason(feature, report_path, blocking_items))
 
         feature_results.append(
             {
                 "feature": feature,
                 "outcome": outcome,
                 "report_path": report_path,
-                "fail_items": fail_items,
+                "blocking_items": [{"status": status, "item": item} for status, item in blocking_items],
                 "returncode": result["returncode"],
             }
         )
@@ -165,6 +167,7 @@ def main() -> int:
     if blocking_reasons:
         new_count = retry_count + 1
         baseline["retry_count"] = new_count
+        baseline["awaiting_continuation"] = True
         write_json(state_path, baseline)
         emit_status(
             f"[spec-self-eval-gate] BLOCK ({len(features)} feature(s): {', '.join(features)}, retry {new_count}/{MAX_RETRIES})",

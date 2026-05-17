@@ -17,12 +17,20 @@ Work:
 - Add `AuditEventPage` response type with `items` and `nextCursor`.
 - Add `AuditEventController.search(...)` accepting the new request model and returning the paginated response.
 - Map service results to `AuditEventResponse`; keep the handler free of any write-path coupling.
+- Extend `ApiExceptionHandler` so its status code reflects "value not provided" vs "value supplied but invalid":
+  - `MissingServletRequestParameterException` → `400`.
+  - `MissingRequestValueException` (service-layer marker, see T2) → `400`.
+  - `MethodArgumentNotValidException` → `400` when any field error code is `NotNull`, otherwise `422`.
+  - `MethodArgumentTypeMismatchException` → `422` (bad ISO-8601, unparsable `limit`, unknown `order` enum value).
+  - `IllegalArgumentException` (service-layer semantic) → `422`.
+- For the existing POST `/audit-events`: add `@NotNull` alongside each `@NotBlank` on `CreateAuditEventRequest` so the handler can distinguish "field absent" (`NotNull` fires → `400`) from "field present but blank" (only `NotBlank` fires → `422`).
 
 Definition of done:
 - `GET /audit-events` accepts `from`, `to`, optional `actor`, optional `resource`, optional `order`, optional `limit`, and optional `cursor`.
-- Missing or malformed API parameters are rejected through the existing `ApiExceptionHandler` contract.
+- Required parameters that are absent return HTTP `400` via `ApiExceptionHandler`; parameters that are present but malformed or out of range return HTTP `422`.
+- POST `/audit-events` returns `400` when a `@NotNull` JSON field is absent and `422` when a present field carries a blank string.
 - Successful responses use `{ items, nextCursor }`.
-- Controller tests cover valid request binding and main `400` request-validation failures.
+- Controller tests cover valid request binding and the main `400` (missing required value) and `422` (present but invalid) request-validation failures, including a regression case for the POST endpoint.
 
 Dependencies:
 - None.
@@ -36,22 +44,23 @@ Implements:
 - [requirements.md](./requirements.md) - `US-1` AC2, AC4, AC5, AC7
 - [requirements.md](./requirements.md) - `US-2` AC4-AC5
 - [requirements.md](./requirements.md) - `US-3` AC2-AC4
-- [design.md](./design.md) - Section `2. API contract` (`400` rules)
+- [design.md](./design.md) - Section `2. API contract` (`400` / `422` rules)
 - [design.md](./design.md) - Section `3. Query & pagination`
 - [design.md](./design.md) - Section `5. Component design` / `service`
 - [design.md](./design.md) - Section `5. Component design` / `Validation split`
 
 Work:
 - Add `AuditEventQuery` as the service-layer value object carrying normalized filters, time range, order, limit, decoded cursor position, and snapshot boundary `T_start`.
-- Add `CursorCodec` using JSON + base64url for encode/decode of cursor payload `{ ts, id, actor, resource, from, to, order, tStart }`.
+- Add `MissingRequestValueException extends IllegalArgumentException` in the `service` package as a marker for "value not provided" (so the API handler can map it to `400` while plain `IllegalArgumentException` maps to `422`).
+- Add `CursorCodec` using JSON + base64url for encode/decode of cursor payload `{ ts, id, actors, resource, from, to, order, tStart }`.
 - Add a `search` method to `AuditEventService` (interface) and `AuditEventServiceImpl` that returns a page result carrying items plus `nextCursor`.
-- Enforce semantic rules in service: blank actor/resource normalize to `null`, `from < to`, time window `<= 90d`, malformed cursor rejected, cursor-query mismatch rejected.
+- Enforce semantic rules in service. Throw `MissingRequestValueException` for "value not provided" cases (entirely blank `actor` parameter). Throw plain `IllegalArgumentException` for "present but invalid" cases: `from < to`, time window `<= 90d`, blank entry inside the actor list, malformed cursor, cursor-query mismatch. Normalize blank `resource` to `null`.
 - Resolve `T_start`: first request (no cursor) → `Instant.now()`; subsequent requests → value decoded from cursor.
 
 Definition of done:
-- Service rejects invalid semantic combinations with `IllegalArgumentException` so the API layer returns `400`.
-- Cursor round-trip preserves `ts`, `id`, `actor`, `resource`, `from`, `to`, `order`, and `tStart`.
-- Cursor tampering or malformed payloads fail closed with `400`.
+- Service rejects "value not provided" cases with `MissingRequestValueException` so the API layer returns `400`; all other semantic violations throw `IllegalArgumentException` so the API layer returns `422`.
+- Cursor round-trip preserves `ts`, `id`, `actors`, `resource`, `from`, `to`, `order`, and `tStart`.
+- Cursor tampering or malformed payloads fail closed with `422`.
 - `T_start` is set on the first request and reused unchanged on every subsequent page of the same cursor walk.
 - Service unit tests cover semantic validation, cursor round-trip, malformed cursor handling, query-mismatch rejection, and `T_start` resolution.
 
@@ -143,14 +152,14 @@ Implements:
 - [requirements.md](./requirements.md) - `US-2` AC2-AC5
 - [requirements.md](./requirements.md) - `US-3` AC1-AC4
 - [design.md](./design.md) - Section `6. Testing strategy` / `Unit (service)`
-- [design.md](./design.md) - Section `6. Testing strategy` / `400` cases
+- [design.md](./design.md) - Section `6. Testing strategy` / `400` and `422` cases
 
 Work:
 - Add controller tests for request binding, validation failures, and page response shape.
 - Add service unit tests for semantic validation, repository dispatch, cursor behavior, page trimming, and `T_start` resolution.
 
 Definition of done:
-- Automated tests cover all specified `400` cases owned by API and service layers.
+- Automated tests cover all specified `400` (missing required value) and `422` (present but invalid) cases owned by API and service layers.
 - Tests verify empty result sets are returned as successful empty pages, not errors.
 - Tests verify case normalization inputs and order dispatch behavior.
 
@@ -195,7 +204,7 @@ Estimated size:
 Implements:
 - [requirements.md](./requirements.md) - `US-1` AC2, AC3
 - [requirements.md](./requirements.md) - `US-3` AC6
-- [design.md](./design.md) - Section `2. API contract` (`actor` row, `400` trigger for > 10 distinct actors)
+- [design.md](./design.md) - Section `2. API contract` (`actor` row, `422` trigger for > 10 distinct actors and blank entry, `400` trigger for empty `actor` value)
 - [design.md](./design.md) - Section `3. Query & pagination` (`IN`-list filter, cursor `actors` payload)
 - [design.md](./design.md) - Section `4. Data model & persistence` (existing index justification for the IN-list)
 - [design.md](./design.md) - Section `5. Component design` / `service` (normalization step)
@@ -204,20 +213,21 @@ Implements:
 
 Work:
 - Accept `actor` as a raw comma-separated string at the API layer; pass it through unchanged to the service.
-- In the service, normalize the actor input: split on `,`, trim each element, drop blanks, lower-case, dedupe, sort. Empty result → no actor filter (`null` / empty list).
-- Enforce a normalized-size cap of 10; throw `IllegalArgumentException` (→ HTTP 400) when exceeded.
+- In the service, normalize the actor input: omitted parameter → no filter; entirely blank value → throw `MissingRequestValueException` (→ HTTP 400); otherwise split on `,`, trim each element, throw `IllegalArgumentException` (→ HTTP 422) on any blank entry, lower-case, dedupe, sort.
+- Enforce a normalized-size cap of 10; throw `IllegalArgumentException` (→ HTTP 422) when exceeded.
 - Replace the single-value `lower(actor) = lower(:actor)` repository predicate with `lower(actor) IN (:actors)`, applied only when the normalized actor list is non-empty.
-- Extend `CursorCodec` payload: rename `actor` to `actors` carrying the sorted lower-cased list; on decode, reject with `400` when the request's normalized actor list does not exactly equal the cursor's `actors`.
-- Update integration and unit tests to exercise multi-actor matching, normalization, cap rejection, and cursor-vs-request actor-list mismatch.
+- Extend `CursorCodec` payload: rename `actor` to `actors` carrying the sorted lower-cased list; on decode, reject with `422` when the request's normalized actor list does not exactly equal the cursor's `actors`.
+- Update integration and unit tests to exercise multi-actor matching, normalization, cap rejection (422), blank-entry rejection (422), empty-value rejection (400), and cursor-vs-request actor-list mismatch (422).
 
 Definition of done:
 - `?actor=a1,a2,a3` returns events whose actor matches any of the listed values, case-insensitive.
-- Lists containing whitespace, duplicates, or empty entries are normalized; the 10-cap is enforced on the normalized list.
-- Requests with more than 10 distinct actors after normalization fail with HTTP 400 via the existing `ApiExceptionHandler`.
-- The cursor binds the normalized actor list; reusing a cursor against a request with a different actor list fails with HTTP 400.
+- Lists containing whitespace are trimmed; duplicates are silently collapsed; blank entries inside a list (`a,,b`, trailing comma) are rejected with HTTP 422; the 10-cap is enforced on the normalized list.
+- Requests with more than 10 distinct actors after normalization fail with HTTP 422 via the existing `ApiExceptionHandler`.
+- An entirely blank `actor` value (`?actor=`, only whitespace) fails with HTTP 400; an omitted `actor` parameter is accepted as "no filter".
+- The cursor binds the normalized actor list; reusing a cursor against a request with a different actor list fails with HTTP 422.
 - Single-actor (`?actor=a1`) behavior remains unchanged.
-- Unit tests cover normalization rules, cap rejection, IN-list dispatch, and cursor mismatch on actor list.
-- Integration tests cover the multi-actor happy path, the > 10-actor 400, and cursor mismatch on actor list.
+- Unit tests cover normalization rules, cap rejection (422), blank-entry rejection (422), empty-value rejection (400), IN-list dispatch, and cursor mismatch on actor list (422).
+- Integration tests cover the multi-actor happy path (1/3/10 actors), the > 10-actor 422, the empty-value 400, the blank-entry 422, and cursor mismatch on actor list (422).
 
 Dependencies:
 - `T1`
@@ -243,4 +253,5 @@ Estimated size:
 
 - `T4` can be delivered in parallel with `T1`-`T3`, but `T7` should run only after the migration is in place.
 - `T8` extends the single-actor baseline; it touches `T1`, `T2`, `T3`, and `T5` artifacts and is best scheduled after the baseline query API is in place.
+- The error-code policy (`400` for missing required value, `422` for present-but-invalid) is owned by `T1` (API handler + POST DTO annotations) and `T2` (service-layer `MissingRequestValueException` vs `IllegalArgumentException`); every later task assumes that split is already in place.
 - The previous simple read endpoint has already been removed; this work builds the query API from scratch rather than modifying an existing one.

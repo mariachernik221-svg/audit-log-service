@@ -6,6 +6,7 @@ import com.auditlog.repository.AuditEventRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,6 +20,7 @@ public class AuditEventServiceImpl implements AuditEventService {
   private static final int DEFAULT_LIMIT = 50;
   private static final Order DEFAULT_ORDER = Order.ASC;
   private static final Duration MAX_WINDOW = Duration.ofDays(90);
+  private static final int MAX_ACTOR_LIST_SIZE = 10;
 
   private final AuditEventRepository repository;
   private final CursorCodec cursorCodec;
@@ -44,7 +46,7 @@ public class AuditEventServiceImpl implements AuditEventService {
   public AuditEventQueryResult search(AuditEventQueryInput input) {
     Objects.requireNonNull(input, "input must not be null");
 
-    String actor = blankToNull(input.actor());
+    List<String> actors = normalizeActors(input.actor());
     String resource = blankToNull(input.resource());
     Order order = input.order() != null ? input.order() : DEFAULT_ORDER;
     int limit = input.limit() != null ? input.limit() : DEFAULT_LIMIT;
@@ -57,12 +59,16 @@ public class AuditEventServiceImpl implements AuditEventService {
     if (Duration.between(input.from(), input.to()).compareTo(MAX_WINDOW) > 0) {
       throw new IllegalArgumentException("time window must not exceed 90 days");
     }
+    if (actors.size() > MAX_ACTOR_LIST_SIZE) {
+      throw new IllegalArgumentException(
+          "actor list must not exceed " + MAX_ACTOR_LIST_SIZE + " distinct values");
+    }
 
     Optional<CursorPosition> position;
     Instant tStart;
     if (input.cursor() != null && !input.cursor().isBlank()) {
       CursorCodec.DecodedCursor decoded = cursorCodec.decode(input.cursor());
-      if (!Objects.equals(decoded.actor(), actor)
+      if (!Objects.equals(decoded.actors(), actors)
           || !Objects.equals(decoded.resource(), resource)
           || !Objects.equals(decoded.from(), input.from())
           || !Objects.equals(decoded.to(), input.to())
@@ -78,16 +84,17 @@ public class AuditEventServiceImpl implements AuditEventService {
 
     AuditEventQuery query =
         new AuditEventQuery(
-            actor, resource, input.from(), input.to(), order, limit, position, tStart);
+            actors, resource, input.from(), input.to(), order, limit, position, tStart);
 
     Instant lastTs = query.position().map(CursorPosition::ts).orElse(null);
     UUID lastId = query.position().map(CursorPosition::id).orElse(null);
     Limit pageLimit = Limit.of(query.limit() + 1);
+    List<String> actorsParam = query.actors().isEmpty() ? null : query.actors();
 
     List<AuditEvent> raw =
         query.order() == Order.ASC
             ? repository.searchAsc(
-                query.actor(),
+                actorsParam,
                 query.resource(),
                 query.from(),
                 query.to(),
@@ -96,7 +103,7 @@ public class AuditEventServiceImpl implements AuditEventService {
                 lastId,
                 pageLimit)
             : repository.searchDesc(
-                query.actor(),
+                actorsParam,
                 query.resource(),
                 query.from(),
                 query.to(),
@@ -112,6 +119,25 @@ public class AuditEventServiceImpl implements AuditEventService {
       return new AuditEventQueryResult(items, nextCursor);
     }
     return new AuditEventQueryResult(raw, null);
+  }
+
+  private static List<String> normalizeActors(String raw) {
+    if (raw == null) {
+      return List.of();
+    }
+    if (raw.isBlank()) {
+      throw new MissingRequestValueException("actor must not be blank");
+    }
+    String[] parts = raw.split(",", -1);
+    List<String> normalized = new java.util.ArrayList<>(parts.length);
+    for (String part : parts) {
+      String trimmed = part.trim();
+      if (trimmed.isEmpty()) {
+        throw new IllegalArgumentException("actor list must not contain blank entries");
+      }
+      normalized.add(trimmed.toLowerCase(Locale.ROOT));
+    }
+    return normalized.stream().distinct().sorted().toList();
   }
 
   private static void requireNonBlank(String value, String name) {

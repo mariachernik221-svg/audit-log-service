@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +21,7 @@ public class CursorCodec {
         new DecodedCursor(
             ts,
             id,
-            query.actor(),
+            query.actors(),
             query.resource(),
             query.from(),
             query.to(),
@@ -54,6 +55,7 @@ public class CursorCodec {
     }
     if (decoded.ts() == null
         || decoded.id() == null
+        || decoded.actors() == null
         || decoded.from() == null
         || decoded.to() == null
         || decoded.order() == null
@@ -66,10 +68,15 @@ public class CursorCodec {
   public record DecodedCursor(
       Instant ts,
       UUID id,
-      String actor,
+      List<String> actors,
       String resource,
       Instant from,
       Instant to,
       Order order,
-      Instant tStart) {}
+      Instant tStart) {
+
+    public DecodedCursor {
+      actors = actors == null ? null : List.copyOf(actors);
+    }
+  }
 }

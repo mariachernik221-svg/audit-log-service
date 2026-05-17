@@ -100,9 +100,22 @@ class AuditEventRepositoryTest {
     save("bob", "r", T2);
 
     List<AuditEvent> result =
-        repository.searchAsc("alice", null, T0, T_FUTURE, T_FUTURE, null, null, BIG);
+        repository.searchAsc(List.of("alice"), null, T0, T_FUTURE, T_FUTURE, null, null, BIG);
 
     assertThat(result).extracting(AuditEvent::getId).containsExactly(match.getId());
+  }
+
+  @Test
+  void searchAscMatchesAnyActorInTheList() {
+    AuditEvent a = save("alice", "r", T1);
+    AuditEvent b = save("BOB", "r", T2);
+    save("carol", "r", T3);
+
+    List<AuditEvent> result =
+        repository.searchAsc(
+            List.of("alice", "bob"), null, T0, T_FUTURE, T_FUTURE, null, null, BIG);
+
+    assertThat(result).extracting(AuditEvent::getId).containsExactly(a.getId(), b.getId());
   }
 
   @Test
@@ -123,7 +136,8 @@ class AuditEventRepositoryTest {
     save("bob", "project:42", T1);
 
     List<AuditEvent> result =
-        repository.searchAsc("alice", "project:42", T0, T_FUTURE, T_FUTURE, null, null, BIG);
+        repository.searchAsc(
+            List.of("alice"), "project:42", T0, T_FUTURE, T_FUTURE, null, null, BIG);
 
     assertThat(result).extracting(AuditEvent::getId).containsExactly(match.getId());
   }
@@ -245,7 +259,8 @@ class AuditEventRepositoryTest {
   void searchAscReturnsEmptyWhenNothingMatches() {
     save("alice", "r", T1);
 
-    assertThat(repository.searchAsc("nobody", null, T0, T_FUTURE, T_FUTURE, null, null, BIG))
+    assertThat(
+            repository.searchAsc(List.of("nobody"), null, T0, T_FUTURE, T_FUTURE, null, null, BIG))
         .isEmpty();
     assertThat(repository.searchAsc(null, "nothing", T0, T_FUTURE, T_FUTURE, null, null, BIG))
         .isEmpty();

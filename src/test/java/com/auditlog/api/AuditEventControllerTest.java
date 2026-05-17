@@ -73,7 +73,7 @@ class AuditEventControllerTest {
   }
 
   @Test
-  void postRejectsBlankActorWith400() throws Exception {
+  void postRejectsBlankActorWith422() throws Exception {
     mockMvc
         .perform(
             post("/audit-events")
@@ -87,7 +87,7 @@ class AuditEventControllerTest {
                                   "outcome": "SUCCESS"
                                 }
                                 """))
-        .andExpect(status().isBadRequest())
+        .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.message").value("validation failed"))
         .andExpect(content().string(containsString("actor")));
     verifyNoInteractions(service);
@@ -113,7 +113,7 @@ class AuditEventControllerTest {
   }
 
   @Test
-  void postMapsServiceIllegalArgumentTo400() throws Exception {
+  void postMapsServiceIllegalArgumentTo422() throws Exception {
     when(service.create(any(), any(), any(), any(), any()))
         .thenThrow(new IllegalArgumentException("actor must not be blank"));
 
@@ -130,7 +130,7 @@ class AuditEventControllerTest {
                                   "outcome": "SUCCESS"
                                 }
                                 """))
-        .andExpect(status().isBadRequest())
+        .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.message").value("actor must not be blank"));
   }
 
@@ -170,6 +170,71 @@ class AuditEventControllerTest {
   }
 
   @Test
+  void getPassesActorListRawToService() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenReturn(new AuditEventQueryResult(List.of(), null));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("actor", "Alice,bob,CAROL"))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<AuditEventQueryInput> captor =
+        ArgumentCaptor.forClass(AuditEventQueryInput.class);
+    verify(service).search(captor.capture());
+    assertThat(captor.getValue().actor()).isEqualTo("Alice,bob,CAROL");
+  }
+
+  @Test
+  void getMapsActorListAbove10To422() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenThrow(new IllegalArgumentException("actor list must not exceed 10 distinct values"));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("actor", "a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11"))
+        .andExpect(status().isUnprocessableEntity())
+        .andExpect(jsonPath("$.message").value("actor list must not exceed 10 distinct values"));
+  }
+
+  @Test
+  void getMapsEmptyActorParamTo400() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenThrow(
+            new com.auditlog.service.MissingRequestValueException("actor must not be blank"));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("actor", ""))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("actor must not be blank"));
+  }
+
+  @Test
+  void getMapsBlankEntryActorListTo422() throws Exception {
+    when(service.search(any(AuditEventQueryInput.class)))
+        .thenThrow(new IllegalArgumentException("actor list must not contain blank entries"));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "2026-04-01T00:00:00Z")
+                .param("to", "2026-04-30T00:00:00Z")
+                .param("actor", "alice,,bob"))
+        .andExpect(status().isUnprocessableEntity())
+        .andExpect(jsonPath("$.message").value("actor list must not contain blank entries"));
+  }
+
+  @Test
   void getPreservesResourceCaseWhenPassingToService() throws Exception {
     when(service.search(any(AuditEventQueryInput.class)))
         .thenReturn(new AuditEventQueryResult(List.of(), null));
@@ -206,7 +271,7 @@ class AuditEventControllerTest {
   }
 
   @Test
-  void getMapsServiceIllegalArgumentTo400() throws Exception {
+  void getMapsServiceIllegalArgumentTo422() throws Exception {
     when(service.search(any(AuditEventQueryInput.class)))
         .thenThrow(new IllegalArgumentException("from must be before to"));
 
@@ -215,7 +280,7 @@ class AuditEventControllerTest {
             get("/audit-events")
                 .param("from", "2026-04-30T00:00:00Z")
                 .param("to", "2026-04-01T00:00:00Z"))
-        .andExpect(status().isBadRequest())
+        .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.message").value("from must be before to"));
   }
 
@@ -238,40 +303,51 @@ class AuditEventControllerTest {
   }
 
   @Test
-  void getRejectsLimitBelowMinWith400() throws Exception {
+  void getRejectsLimitBelowMinWith422() throws Exception {
     mockMvc
         .perform(
             get("/audit-events")
                 .param("from", "2026-04-01T00:00:00Z")
                 .param("to", "2026-04-30T00:00:00Z")
                 .param("limit", "0"))
-        .andExpect(status().isBadRequest())
+        .andExpect(status().isUnprocessableEntity())
         .andExpect(content().string(containsString("limit")));
     verifyNoInteractions(service);
   }
 
   @Test
-  void getRejectsLimitAboveMaxWith400() throws Exception {
+  void getRejectsLimitAboveMaxWith422() throws Exception {
     mockMvc
         .perform(
             get("/audit-events")
                 .param("from", "2026-04-01T00:00:00Z")
                 .param("to", "2026-04-30T00:00:00Z")
                 .param("limit", "501"))
-        .andExpect(status().isBadRequest())
+        .andExpect(status().isUnprocessableEntity())
         .andExpect(content().string(containsString("limit")));
     verifyNoInteractions(service);
   }
 
   @Test
-  void getRejectsUnknownOrderWith400() throws Exception {
+  void getRejectsUnknownOrderWith422() throws Exception {
     mockMvc
         .perform(
             get("/audit-events")
                 .param("from", "2026-04-01T00:00:00Z")
                 .param("to", "2026-04-30T00:00:00Z")
                 .param("order", "sideways"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isUnprocessableEntity());
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void getRejectsMalformedFromWith422() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", "not-a-date")
+                .param("to", "2026-04-30T00:00:00Z"))
+        .andExpect(status().isUnprocessableEntity());
     verifyNoInteractions(service);
   }
 

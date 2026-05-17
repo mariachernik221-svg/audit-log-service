@@ -22,7 +22,10 @@ Implements [`requirements.md`](./requirements.md).
 
 **Response 200** — `{ "items": [...AuditEventResponse], "nextCursor": "<string>" | null }`
 
-**Response 400** — existing `ApiExceptionHandler` body. Triggers: missing/invalid `from`/`to`, `from >= to`, `to - from > 90d`, `limit` out of range, bad `order`, malformed cursor, cursor whose embedded query differs from the current request, more than 10 distinct actors in the list (after trim + dedupe).
+**Error responses.** All errors share the existing `ApiExceptionHandler` body. Status code is selected by whether the offending value was missing or invalid:
+
+- **Response 400 — value not provided.** Required parameter absent (`from`, `to`), or `actor` parameter present but empty/whitespace-only (treated as "no value supplied"). On POST `/audit-events`, a missing JSON field that the schema declares `@NotNull` (e.g. `outcome` key absent) also returns 400.
+- **Response 422 — value supplied but invalid.** Malformed ISO-8601 in `from`/`to`, `from >= to`, `to - from > 90d`, `limit` out of `[1, 500]`, unknown `order`, malformed cursor (bad base64/JSON/missing fields), cursor whose embedded query differs from the current request, more than 10 distinct actors after trim + dedupe, `actor` list with a blank entry between commas. On POST `/audit-events`, a present-but-blank string field (e.g. `"actor": ""`) also returns 422.
 
 ## 3. Query & pagination
 
@@ -71,7 +74,7 @@ Layering per `AGENTS.md`.
 
 - `AuditEventQuery` — value object carrying normalized inputs + decoded cursor.
 - `AuditEventServiceImpl.search`:
-  1. Normalize `actor`: split on `,`, trim each piece, drop blanks, lower-case, dedupe, sort. Empty result → no actor filter. Normalize blank `resource` to `null`.
+  1. Normalize `actor`: when the parameter is omitted (`null`) → no actor filter. When present but entirely blank → `IllegalArgumentException` (→ 400). Otherwise split on `,`, trim each piece, reject any blank entry with `IllegalArgumentException` (→ 400), lower-case, dedupe, sort. Normalize blank `resource` to `null`.
   2. Semantic checks (throw `IllegalArgumentException`): `from < to`, window ≤ 90d, normalized actor list size ≤ 10, cursor decodes and matches query.
   3. Resolve `T_start`: if cursor present → use `tStart` from cursor; else → `Instant.now()`.
   4. Call repository with `limit + 1`, passing `T_start` as upper bound alongside `from`/`to`.
@@ -91,17 +94,19 @@ Each method takes a `org.springframework.data.domain.Limit` parameter; the servi
 
 **Validation split**
 
-| Layer    | Checks                                                              |
-|----------|---------------------------------------------------------------------|
-| `api`    | format, required `from`/`to`, `limit` range, `order` enum            |
-| `service`| `from < to`, window ≤ 90d, actor list ≤ 10 distinct values after trim + dedupe, cursor decode + cursor-vs-query match |
+| Layer    | Checks                                                              | Failure → status |
+|----------|---------------------------------------------------------------------|-------------------|
+| `api`    | required `from`/`to` present                                        | 400 |
+| `api`    | ISO-8601 format, `limit` in `[1, 500]`, `order` enum value           | 422 |
+| `service`| `actor` parameter present but blank                                  | 400 (`MissingRequestValueException`) |
+| `service`| `from < to`, window ≤ 90d, actor list ≤ 10 distinct values after trim + dedupe, no blank entry inside list, cursor decode + cursor-vs-query match | 422 (`IllegalArgumentException`) |
 
 ## 6. Testing strategy
 
 **Unit (`service`)**
 
-- Reject `from >= to`, window > 90d, mismatched cursor, actor list with > 10 distinct values after normalization.
-- Actor list normalization: trim, drop blanks, lower-case, dedupe, sort; duplicates and blank entries are collapsed before the 10-cap is enforced.
+- Reject `from >= to`, window > 90d, mismatched cursor, actor list with > 10 distinct values after normalization, `actor` parameter present but entirely blank, actor list with a blank entry between commas.
+- Actor list normalization: trim, reject blanks (whole value or any entry), lower-case, dedupe, sort; duplicates are collapsed before the 10-cap is enforced.
 - `limit + 1` probing trims correctly; `nextCursor` null when single page.
 - Asc/desc dispatched to correct repository method.
 - `CursorCodec` round-trip; rejects malformed input.
@@ -110,7 +115,8 @@ Each method takes a `org.springframework.data.domain.Limit` parameter; the servi
 
 - Happy paths: actor + range, resource + range, range only, both orders.
 - Case-insensitive match.
-- `400` cases: missing `from`/`to`, `from >= to`, window > 90d, `limit` out of range, bad cursor, cursor with mismatched filters/order, actor list with > 10 distinct values.
+- `400` cases (value not provided): missing `from`/`to`, `actor` parameter present but empty/whitespace-only.
+- `422` cases (value supplied but invalid): `from >= to`, window > 90d, `limit` out of range, bad cursor, cursor with mismatched filters/order, actor list with > 10 distinct values, blank entry inside the actor list, malformed ISO-8601, unknown `order`.
 - Multi-actor happy path: `?actor=a1,a2,a3` returns the union of events whose actor matches any list entry (case-insensitive); pagination, ordering, and snapshot guarantees match the single-actor case.
 - Pagination invariants: union of pages = unpaged query, no duplicates, no gaps — including with concurrent appends inside the range. Events appended after the first page must not appear in any later page of the same cursor walk (snapshot boundary `T_start`).
 - Ties on `timestamp` resolved by `id` consistently across page boundaries.

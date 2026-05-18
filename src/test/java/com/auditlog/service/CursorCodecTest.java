@@ -22,14 +22,7 @@ class CursorCodecTest {
     Instant tStart = Instant.parse("2026-05-01T08:00:00Z");
     AuditEventQuery query =
         new AuditEventQuery(
-            List.of("alice"),
-            "project:42",
-            from,
-            to,
-            Order.DESC,
-            50,
-            Optional.empty(),
-            tStart);
+            List.of("alice"), "project:42", from, to, Order.DESC, 50, Optional.empty(), tStart);
 
     String encoded = codec.encode(ts, id, query);
     CursorCodec.DecodedCursor decoded = codec.decode(encoded);
@@ -148,7 +141,6 @@ class CursorCodecTest {
                         + "\"from\":\"2026-04-01T00:00:00Z\",\"to\":\"2026-04-30T00:00:00Z\","
                         + "\"order\":\"ASC\",\"tStart\":\"2026-05-01T00:00:00Z\"}")
                     .getBytes());
-    assertThatThrownBy(() -> codec.decode(legacy))
-        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> codec.decode(legacy)).isInstanceOf(IllegalArgumentException.class);
   }
 }

@@ -258,15 +258,15 @@ class QueryApiIntegrationTest {
     Page page = objectMapper.readValue(result.getResponse().getContentAsString(), Page.class);
     List<String> ids = page.items().stream().map(m -> (String) m.get("id")).toList();
     assertThat(ids)
-        .containsExactly(eAlice.getId().toString(), eBob.getId().toString(), eCarol.getId().toString());
+        .containsExactly(
+            eAlice.getId().toString(), eBob.getId().toString(), eCarol.getId().toString());
   }
 
   @Test
   void multiActorHappyPathWithTenActorsHitsAllAndExcludesEleventh() throws Exception {
     List<AuditEvent> targets = new ArrayList<>();
     for (int i = 1; i <= 10; i++) {
-      targets.add(
-          seed("actor10-" + i, "r", Instant.parse("2026-04-02T00:00:00Z").plusSeconds(i)));
+      targets.add(seed("actor10-" + i, "r", Instant.parse("2026-04-02T00:00:00Z").plusSeconds(i)));
     }
     seed("actor10-11", "r", Instant.parse("2026-04-02T00:00:10Z"));
     flush();
@@ -288,9 +288,13 @@ class QueryApiIntegrationTest {
             .andReturn();
     Page page = objectMapper.readValue(result.getResponse().getContentAsString(), Page.class);
     Set<String> ids =
-        page.items().stream().map(m -> (String) m.get("id")).collect(java.util.stream.Collectors.toSet());
+        page.items().stream()
+            .map(m -> (String) m.get("id"))
+            .collect(java.util.stream.Collectors.toSet());
     Set<String> expected =
-        targets.stream().map(e -> e.getId().toString()).collect(java.util.stream.Collectors.toSet());
+        targets.stream()
+            .map(e -> e.getId().toString())
+            .collect(java.util.stream.Collectors.toSet());
     assertThat(ids).isEqualTo(expected);
   }
 
@@ -302,13 +306,11 @@ class QueryApiIntegrationTest {
     List<UUID> expected = new ArrayList<>();
     for (int i = 0; i < 5; i++) {
       expected.add(
-          seed(actorAlice, "r", Instant.parse("2026-04-02T00:00:00Z").plusSeconds(i * 3L))
-              .getId());
+          seed(actorAlice, "r", Instant.parse("2026-04-02T00:00:00Z").plusSeconds(i * 3L)).getId());
       expected.add(
           seed(actorBob, "r", Instant.parse("2026-04-02T00:00:01Z").plusSeconds(i * 3L)).getId());
       expected.add(
-          seed(actorCarol, "r", Instant.parse("2026-04-02T00:00:02Z").plusSeconds(i * 3L))
-              .getId());
+          seed(actorCarol, "r", Instant.parse("2026-04-02T00:00:02Z").plusSeconds(i * 3L)).getId());
     }
     seed("other", "r", Instant.parse("2026-04-02T00:01:00Z"));
     flush();

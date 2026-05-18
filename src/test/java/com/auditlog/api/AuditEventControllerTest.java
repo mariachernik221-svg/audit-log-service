@@ -344,9 +344,7 @@ class AuditEventControllerTest {
   void getRejectsMalformedFromWith422() throws Exception {
     mockMvc
         .perform(
-            get("/audit-events")
-                .param("from", "not-a-date")
-                .param("to", "2026-04-30T00:00:00Z"))
+            get("/audit-events").param("from", "not-a-date").param("to", "2026-04-30T00:00:00Z"))
         .andExpect(status().isUnprocessableEntity());
     verifyNoInteractions(service);
   }

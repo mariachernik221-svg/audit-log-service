@@ -5,9 +5,9 @@ Estimated size scale: `S` = up to 0.5 day, `M` = 1-2 days, `L` = 2-3 days.
 ## T1. Add the paginated query endpoint and request/response types
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC1, AC2, AC4, AC6
-- [requirements.md](./requirements.md) - `US-2` AC1-AC3
-- [requirements.md](./requirements.md) - `US-3` AC1-AC2
+- [requirements.md](./requirements.md) - `US-1` AC-1.1, AC-1.2, AC-1.8, AC-1.10
+- [requirements.md](./requirements.md) - `US-2` AC-2.1, AC-2.2, AC-2.3, AC-2.4
+- [requirements.md](./requirements.md) - `US-3` AC-3.1, AC-3.2, AC-3.3, AC-3.4
 - [design.md](./design.md) - Section `1. Overview`
 - [design.md](./design.md) - Section `2. API contract`
 - [design.md](./design.md) - Section `5. Component design` / `api`
@@ -41,9 +41,9 @@ Estimated size:
 ## T2. Build the service-layer query model, semantic validation, and cursor codec
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC2, AC4, AC5, AC7
-- [requirements.md](./requirements.md) - `US-2` AC4-AC5
-- [requirements.md](./requirements.md) - `US-3` AC2-AC4
+- [requirements.md](./requirements.md) - `US-1` AC-1.2, AC-1.8, AC-1.9, AC-1.11
+- [requirements.md](./requirements.md) - `US-2` AC-2.5, AC-2.6
+- [requirements.md](./requirements.md) - `US-3` AC-3.3, AC-3.4, AC-3.5, AC-3.6, AC-3.7, AC-3.8, AC-3.9, AC-3.10
 - [design.md](./design.md) - Section `2. API contract` (`400` / `422` rules)
 - [design.md](./design.md) - Section `3. Query & pagination`
 - [design.md](./design.md) - Section `5. Component design` / `service`
@@ -73,8 +73,8 @@ Estimated size:
 ## T3. Implement deterministic keyset search in the repository
 
 Implements:
-- [requirements.md](./requirements.md) - `US-2` AC2-AC5
-- [requirements.md](./requirements.md) - `US-3` AC3-AC5
+- [requirements.md](./requirements.md) - `US-2` AC-2.2, AC-2.3, AC-2.4, AC-2.5, AC-2.6
+- [requirements.md](./requirements.md) - `US-3` AC-3.5, AC-3.6, AC-3.7, AC-3.8, AC-3.11
 - [design.md](./design.md) - Section `3. Query & pagination`
 - [design.md](./design.md) - Section `5. Component design` / `repository`
 
@@ -121,7 +121,7 @@ Estimated size:
 ## T5. Wire service pagination flow end-to-end
 
 Implements:
-- [requirements.md](./requirements.md) - `US-3` AC1-AC5
+- [requirements.md](./requirements.md) - `US-3` AC-3.1, AC-3.2, AC-3.3, AC-3.4, AC-3.5, AC-3.6, AC-3.7, AC-3.8, AC-3.11
 - [design.md](./design.md) - Section `3. Query & pagination`
 - [design.md](./design.md) - Section `5. Component design` / `service`
 
@@ -148,9 +148,9 @@ Estimated size:
 ## T6. Add controller and service automated tests for validation and contract behavior
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC2, AC4, AC5, AC6
-- [requirements.md](./requirements.md) - `US-2` AC2-AC5
-- [requirements.md](./requirements.md) - `US-3` AC1-AC4
+- [requirements.md](./requirements.md) - `US-1` AC-1.2, AC-1.8, AC-1.9, AC-1.10
+- [requirements.md](./requirements.md) - `US-2` AC-2.2, AC-2.3, AC-2.4, AC-2.5, AC-2.6
+- [requirements.md](./requirements.md) - `US-3` AC-3.1, AC-3.2, AC-3.3, AC-3.4, AC-3.5, AC-3.6, AC-3.7, AC-3.8, AC-3.9, AC-3.10
 - [design.md](./design.md) - Section `6. Testing strategy` / `Unit (service)`
 - [design.md](./design.md) - Section `6. Testing strategy` / `400` and `422` cases
 
@@ -174,9 +174,9 @@ Estimated size:
 ## T7. Add integration coverage for filtering, ordering, and pagination invariants
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC1-AC7
-- [requirements.md](./requirements.md) - `US-2` AC1-AC5
-- [requirements.md](./requirements.md) - `US-3` AC1-AC5
+- [requirements.md](./requirements.md) - `US-1` AC-1.1, AC-1.2, AC-1.3, AC-1.4, AC-1.5, AC-1.6, AC-1.7, AC-1.8, AC-1.9, AC-1.10, AC-1.11, AC-1.13
+- [requirements.md](./requirements.md) - `US-2` AC-2.1, AC-2.2, AC-2.3, AC-2.4, AC-2.5, AC-2.6
+- [requirements.md](./requirements.md) - `US-3` AC-3.1, AC-3.2, AC-3.3, AC-3.4, AC-3.5, AC-3.6, AC-3.7, AC-3.8, AC-3.9, AC-3.10, AC-3.11
 - [design.md](./design.md) - Section `6. Testing strategy` / `Integration`
 
 Work:
@@ -202,8 +202,8 @@ Estimated size:
 ## T8. Add multi-actor list support to the actor filter
 
 Implements:
-- [requirements.md](./requirements.md) - `US-1` AC2, AC3
-- [requirements.md](./requirements.md) - `US-3` AC6
+- [requirements.md](./requirements.md) - `US-1` AC-1.2, AC-1.3, AC-1.4, AC-1.5, AC-1.6, AC-1.7
+- [requirements.md](./requirements.md) - `US-3` AC-3.12
 - [design.md](./design.md) - Section `2. API contract` (`actor` row, `422` trigger for > 10 distinct actors and blank entry, `400` trigger for empty `actor` value)
 - [design.md](./design.md) - Section `3. Query & pagination` (`IN`-list filter, cursor `actors` payload)
 - [design.md](./design.md) - Section `4. Data model & persistence` (existing index justification for the IN-list)

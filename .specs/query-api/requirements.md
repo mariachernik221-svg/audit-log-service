@@ -10,16 +10,21 @@ Audit events are stored immutably but cannot currently be queried in a structure
 
 **As a** compliance officer, **I want to** find events for a specific actor within a time range, **so that** I can confirm whether an action took place during an audit.
 
-**AC:**
-- A user can retrieve events filtered by actor and a time range.
-- The `actor` query parameter accepts a comma-separated list (e.g. `?actor=a1,a2,a3`); an event matches if its actor equals any value in the list, regardless of letter casing.
-- The actor list is capped at 10 distinct values after trimming whitespace and removing duplicates; requests carrying more than 10 distinct values are rejected with HTTP 422. Duplicates are dropped silently before the cap is enforced. A list that contains any blank entry between commas (e.g. `?actor=a,,b`, `?actor=alice,bob,`) is rejected with HTTP 422. An entirely blank `actor` value (`?actor=`, only whitespace) is treated as "value not provided" and rejected with HTTP 400. Omitting the `actor` parameter entirely is treated as "no actor filter" and is accepted.
-- When no events match, the result is an HTTP 200 response with an empty result set (not a 4xx/5xx error).
-- Freshness: an event is visible to a new query as soon as its write transaction has committed; no additional numeric latency guarantee is provided.
-- A time range must always be provided; queries missing either the start or end of the range are rejected with HTTP 400.
-- Time-range span is capped at 90 days (`to - from <= 90d`); requests above the cap are rejected with HTTP 422 (see `design.md` §2).
-- Each returned event exposes the following fields: `id`, `timestamp`, `actor`, `action`, `resource`, `outcome`, and `context`.
-- Query endpoints are read-only: a successful or failed query performs no `INSERT`, `UPDATE`, or `DELETE` on the `audit_events` table.
+**AC:** (EARS form: `WHEN <trigger> THEN <observable outcome>`)
+
+- **AC-1.1** WHEN client sends GET with `actor=<a>` AND `from=T1&to=T2` THEN response 200 contains only events whose `actor` equals `<a>` (case-insensitive) AND `T1 <= timestamp < T2`.
+- **AC-1.2** WHEN client sends `actor=a1,a2,a3` (comma-separated) THEN response 200 contains only events whose `actor` equals any value in the list (case-insensitive).
+- **AC-1.3** WHEN client sends `actor` list with more than 10 distinct values (after trim + dedup) THEN response is HTTP 422.
+- **AC-1.4** WHEN client sends `actor` list containing duplicate values THEN duplicates are dropped silently before the 10-value cap is enforced.
+- **AC-1.5** WHEN client sends `actor` list with a blank entry between commas (e.g. `?actor=a,,b`, `?actor=alice,bob,`) THEN response is HTTP 422.
+- **AC-1.6** WHEN client sends `actor=` or `actor=<whitespace>` THEN response is HTTP 400 ("value not provided").
+- **AC-1.7** WHEN client omits the `actor` parameter entirely THEN no actor filter is applied AND response is 200.
+- **AC-1.8** WHEN query matches no events THEN response is HTTP 200 with an empty result set.
+- **AC-1.9** WHEN an event's write transaction has committed THEN that event is visible to any new query started after commit (no additional numeric latency guarantee).
+- **AC-1.10** WHEN client sends request missing `from` OR `to` THEN response is HTTP 400.
+- **AC-1.11** WHEN `to - from > 90 days` THEN response is HTTP 422 (see `design.md` §2).
+- **AC-1.12** WHEN response 200 returns events THEN each event exposes fields `id`, `timestamp`, `actor`, `action`, `resource`, `outcome`, `context`.
+- **AC-1.13** WHEN client sends any GET query (success or failure) THEN no `INSERT`, `UPDATE`, or `DELETE` is executed on `audit_events`.
 
 **Error code policy.** All required parameters that are absent or empty are rejected with HTTP 400 ("value not provided"). All parameters that are present but malformed or semantically invalid (bad ISO-8601, `from >= to`, window > 90d, `limit` out of `[1, 500]`, unknown `order`, blank entry inside the actor list, more than 10 actors, malformed cursor, cursor whose embedded query differs from the current request) are rejected with HTTP 422 ("value supplied but invalid"). 422 also applies to the POST `/audit-events` endpoint when a present field carries a blank string (e.g. `"actor": ""`); a JSON body missing the field entirely (e.g. no `outcome` key) is rejected with HTTP 400.
 
@@ -27,24 +32,33 @@ Audit events are stored immutably but cannot currently be queried in a structure
 
 **As an** SRE, **I want to** retrieve events for a specific resource within a time range, ordered by time, **so that** I can reconstruct what happened during an incident.
 
-**AC:**
-- A user can retrieve events filtered by resource and a time range.
-- Results are returned in a deterministic time order — two identical queries always produce the same sequence.
-- The user can choose chronological (oldest first) or reverse-chronological (most recent first) order.
-- Filters by actor and by resource can be combined; results then satisfy both.
-- Filtering on actor or resource matches regardless of letter casing, so users do not have to guess how a value was originally written.
+**AC:** (EARS form: `WHEN <trigger> THEN <observable outcome>`)
+
+- **AC-2.1** WHEN client sends GET with `resource=<r>` AND `from=T1&to=T2` THEN response 200 contains only events whose `resource` equals `<r>` (case-insensitive) AND `T1 <= timestamp < T2`.
+- **AC-2.2** WHEN two identical queries are issued against an unchanged dataset THEN both return events in the same sequence.
+- **AC-2.3** WHEN client sends `order=asc` THEN events are ordered chronologically (oldest first).
+- **AC-2.4** WHEN client sends `order=desc` THEN events are ordered reverse-chronologically (most recent first).
+- **AC-2.5** WHEN client sends both `actor` AND `resource` filters THEN response 200 contains only events that satisfy both filters.
+- **AC-2.6** WHEN client sends `actor` or `resource` value differing only in letter case from the stored value THEN that event matches.
 
 ### US-3: Security analyst paginates a large result set without loss or duplication
 
 **As a** security analyst, **I want to** walk through a large result set page by page, **so that** I can process every matching event exactly once.
 
-**AC:**
-- The user can request results in pages. Default page size is 50 events. The page size is capped at 500; requests above the cap are rejected with HTTP 422.
-- When more results are available, the response includes a non-null `nextCursor` field. When the final page has been returned, `nextCursor` is null (or omitted).
-- A query establishes a snapshot boundary `T_start` equal to the server time of the first request. All pages of that query return only events with `timestamp <= T_start`. Events appended after `T_start` are not visible until a new query is started. Iterating all pages of a query returns each event with `timestamp <= T_start` exactly once — no duplicates, no missing events.
-- The cursor is an opaque token: the server returns it as a string, and the client passes it back unchanged. A cursor that has been modified, truncated, or otherwise tampered with is rejected with HTTP 422. Clients are not expected to parse or construct cursor contents.
-- The guarantees above (snapshot boundary, exactly-once iteration, cursor opacity, page-size cap) hold for every supported combination of filters (actor, resource) and order (chronological, reverse-chronological).
-- A multi-actor query (`?actor=a1,a2,…`) paginates under the same guarantees as a single-actor query: snapshot boundary, exactly-once iteration, deterministic order, and cursor opacity all hold; the cursor binds the full actor list so reusing a cursor with a different list is rejected with HTTP 422.
+**AC:** (EARS form: `WHEN <trigger> THEN <observable outcome>`)
+
+- **AC-3.1** WHEN client omits the `limit` parameter THEN default page size is 50.
+- **AC-3.2** WHEN client sends `limit > 500` THEN response is HTTP 422.
+- **AC-3.3** WHEN more results exist beyond the current page THEN response includes a non-null `nextCursor` field.
+- **AC-3.4** WHEN the final page has been returned THEN `nextCursor` is null (or omitted).
+- **AC-3.5** WHEN the first request of a query is received THEN server records `T_start` equal to current server time.
+- **AC-3.6** WHEN client paginates through a query whose snapshot boundary is `T_start` THEN every page returns only events with `timestamp <= T_start`.
+- **AC-3.7** WHEN events are appended after `T_start` THEN those events are not visible to any subsequent page of the original query.
+- **AC-3.8** WHEN client iterates through all pages of a query THEN each event with `timestamp <= T_start` is returned exactly once (no duplicates, no missing events).
+- **AC-3.9** WHEN server returns `nextCursor` THEN client passes it back unchanged in the next request (no parsing or construction by client).
+- **AC-3.10** WHEN client sends a `cursor` that has been modified, truncated, or otherwise tampered with THEN response is HTTP 422.
+- **AC-3.11** WHEN snapshot/exactly-once/opacity/page-cap guarantees apply THEN they hold for every supported combination of `actor`, `resource`, and `order` (asc/desc).
+- **AC-3.12** WHEN client reuses a cursor from a multi-actor query with a different actor list THEN response is HTTP 422 (cursor binds the full actor list).
 
 ## Out of scope
 

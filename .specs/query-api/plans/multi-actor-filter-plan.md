@@ -2,7 +2,7 @@
 
 ## Context
 
-`tasks.md` T8 extends the existing single-actor filter to a comma-separated list (cap 10) per `requirements.md` US-1 AC2/AC3 and US-3 AC6, justified by `design.md` §2/§3/§4/§5/§6. Today:
+`tasks.md` T8 extends the existing single-actor filter to a comma-separated list (cap 10) per `requirements.md` US-1 AC-1.2 / AC-1.3 / AC-1.4 / AC-1.5 / AC-1.6 / AC-1.7 and US-3 AC-3.12, justified by `design.md` §2/§3/§4/§5/§6. Today:
 
 - `AuditEventQueryRequest.actor` (api) — single raw `String`.
 - `AuditEventQueryInput.actor` / `AuditEventQuery.actor` (service) — single `String`, blank → `null` (`AuditEventServiceImpl.search` lines 47–48).

@@ -29,14 +29,14 @@ Implements [`requirements.md`](./requirements.md).
 
 ## 3. Query & pagination
 
-**Why keyset over offset.** Offset pagination (`LIMIT n OFFSET m`) makes the DB scan and discard `m` rows for every page, so cost grows linearly with depth — bad fit for audit walks that may traverse millions of events. Offset also breaks the exactly-once guarantee from `requirements.md` US-3 AC3: rows shift under the offset window if anything inserts or reorders mid-walk, producing duplicates or skips. Keyset on `(timestamp, id)` is index-backed, O(log n) per page regardless of depth, and gives stable cursor semantics — combined with the snapshot boundary (`timestamp <= T_start`, see below), each event in the result set is returned exactly once. Cursor stays opaque per US-3 AC4.
+**Why keyset over offset.** Offset pagination (`LIMIT n OFFSET m`) makes the DB scan and discard `m` rows for every page, so cost grows linearly with depth — bad fit for audit walks that may traverse millions of events. Offset also breaks the exactly-once guarantee from `requirements.md` AC-3.8: rows shift under the offset window if anything inserts or reorders mid-walk, producing duplicates or skips. Keyset on `(timestamp, id)` is index-backed, O(log n) per page regardless of depth, and gives stable cursor semantics — combined with the snapshot boundary (`timestamp <= T_start`, see below), each event in the result set is returned exactly once. Cursor stays opaque per AC-3.9 / AC-3.10.
 
 - Filter: `lower(actor) IN (lower(:a1), …, lower(:aN))` when an actor list is present (N ≤ 10) / `lower(resource) = lower(:resource)` when present; `timestamp >= :from AND timestamp < :to` always; **plus snapshot boundary `timestamp <= :T_start`**.
 - Snapshot boundary `T_start`:
   - First request of a query (no cursor): server sets `T_start = Instant.now()`.
   - Subsequent requests: server decodes `T_start` from the cursor and reuses it for every page of the same query.
-  - Effect: events written after the first request are excluded from this query and only become visible to a *new* query. Implements `requirements.md` US-3 AC3.
-- Freshness (`requirements.md` US-1 AC3): a committed event with `timestamp <= T_start` is included in the result set on the very next query — read-after-commit visibility falls out of running the snapshot query at `READ COMMITTED` against the append-only table. No write-side buffering or async indexing is introduced.
+  - Effect: events written after the first request are excluded from this query and only become visible to a *new* query. Implements `requirements.md` AC-3.5 / AC-3.6 / AC-3.7 / AC-3.8.
+- Freshness (`requirements.md` AC-1.9): a committed event with `timestamp <= T_start` is included in the result set on the very next query — read-after-commit visibility falls out of running the snapshot query at `READ COMMITTED` against the append-only table. No write-side buffering or async indexing is introduced.
 - Sort: `timestamp <order>, id <order>` — strict total order, deterministic.
 - Cursor payload (JSON, then base64url):
   ```
@@ -62,7 +62,7 @@ Covers the three filter shapes (actor + range, resource + range, range only) and
 
 ## 5. Component design
 
-Layering per `AGENTS.md`.
+Layering per `AGENTS.md` (see §7 for the full invariants map).
 
 **`api`**
 
@@ -120,3 +120,35 @@ Each method takes a `org.springframework.data.domain.Limit` parameter; the servi
 - Multi-actor happy path: `?actor=a1,a2,a3` returns the union of events whose actor matches any list entry (case-insensitive); pagination, ordering, and snapshot guarantees match the single-actor case.
 - Pagination invariants: union of pages = unpaged query, no duplicates, no gaps — including with concurrent appends inside the range. Events appended after the first page must not appear in any later page of the same cursor walk (snapshot boundary `T_start`).
 - Ties on `timestamp` resolved by `id` consistently across page boundaries.
+
+## 7. AGENTS.md alignment
+
+How each `AGENTS.md` invariant, architectural rule, and feedback-loop requirement is honored by this design.
+
+### Invariants
+
+| `AGENTS.md` invariant | Honored by | Evidence in this design |
+|-----------------------|------------|-------------------------|
+| Events append-only — no updates, no deletes | Read-only endpoint; no write paths added. | §2 contract is `GET /audit-events` only — no PUT/PATCH/DELETE; §4 migration `V3__query_api_indexes.sql` is index-only, no schema or data mutation; `tasks.md` T1 DoD: "no `INSERT`/`UPDATE`/`DELETE` on `audit_events`"; requirements AC-1.13. |
+| Event `timestamp` set only by the server | Query consumes `timestamp` as written; server-side `T_start` derives from `Instant.now()`, never from client input. | §3 "First request of a query (no cursor): server sets `T_start = Instant.now()`"; cursor `tStart` field is propagated only, never validated against the request (§3 cursor payload note). |
+| `actor` is required for event | Out of scope for the read path — write-side guarantee. Read path treats `actor` as an optional **filter**; omitted = "no filter", not a missing field. | §2 `actor` row "Required: no"; AC-1.7 (omitted parameter accepted); query never asserts non-null `actor` on stored rows. |
+| Spec changes need passing `spec-self-eval` | Process invariant — enforced by stop hook, not by this design. | N/A in design content; honored by running the skill after spec edits. |
+
+### Architectural rules
+
+| `AGENTS.md` rule | Honored by |
+|------------------|------------|
+| Dependency direction (`api → service/domain`, `service → domain/repository`, `repository → domain`) | §5 packages: `AuditEventQueryRequest`/`AuditEventController` in `api`; `AuditEventQuery`/`AuditEventServiceImpl`/`CursorCodec` in `service`; `searchAsc/searchDesc` in `repository`. No reverse imports. |
+| REST logic in `api` only | §5 Validation split: required-param presence + format/range checks live in `api`; semantic checks live in `service`. |
+| Business logic in `service` only | §5 `service` owns actor normalization, cursor decode, `T_start`, `from < to`, 90d window, actor-cap 10. |
+| Storage logic in `repository` only | §3/§5 keyset SQL (`searchAsc`/`searchDesc`), `LIMIT + 1` probing, `IN`-list binding all in `repository`. |
+| All code covered with tests | §6 Testing strategy: unit (`service`, `CursorCodec`) + integration (Spring + Testcontainers Postgres) covering every AC. |
+| No new libraries without strong necessity | §3/§5 reuse existing Spring `NamedParameterJdbcTemplate`/JPQL, jakarta validation, existing `ApiExceptionHandler`. No new deps. Cursor uses JDK base64 + Jackson (already in classpath). |
+| Deterministic sort with tiebreaker for any list endpoint | §3 "Sort: `timestamp <order>, id <order>` — strict total order, deterministic"; AC-2.2 covered by §6 integration test. |
+
+### Feedback loop
+
+| `AGENTS.md` requirement | Honored by |
+|-------------------------|------------|
+| Run relevant unit + integration tests after any code change | `tasks.md` per-task DoD lists the test additions; T6 owns service+controller tests; T7 owns full integration sweep. |
+| Schema / Flyway changes apply on clean DB and don't break existing data access | §4 `V3` migration is purely additive (three indexes, no data writes); `tasks.md` T4 DoD: "Migration creates all three indexes" + "Existing write-path behavior remains unchanged"; T7 runs full suite on migrated DB. |

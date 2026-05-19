@@ -199,7 +199,14 @@ class AuditEventServiceImplTest {
     Instant tStart = Instant.parse("2026-05-01T12:00:00Z");
     AuditEventQuery prior =
         new AuditEventQuery(
-            "alice", "project:42", from, to, Order.ASC, 50, java.util.Optional.empty(), tStart);
+            List.of("alice"),
+            "project:42",
+            from,
+            to,
+            Order.ASC,
+            50,
+            java.util.Optional.empty(),
+            tStart);
     String cursor =
         cursorCodec.encode(Instant.parse("2026-04-15T00:00:00Z"), UUID.randomUUID(), prior);
 
@@ -213,7 +220,8 @@ class AuditEventServiceImplTest {
 
   @Test
   void searchRejectsCursorWithMismatchedActor() {
-    String cursor = encodedCursor("alice", "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
+    String cursor =
+        encodedCursor(List.of("alice"), "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
     AuditEventQueryInput input =
         new AuditEventQueryInput(
             "bob", "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, cursor);
@@ -224,7 +232,8 @@ class AuditEventServiceImplTest {
 
   @Test
   void searchRejectsCursorWithMismatchedResource() {
-    String cursor = encodedCursor("a", "r1", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
+    String cursor =
+        encodedCursor(List.of("a"), "r1", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
     AuditEventQueryInput input =
         new AuditEventQueryInput(
             "a", "r2", asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, cursor);
@@ -235,7 +244,8 @@ class AuditEventServiceImplTest {
 
   @Test
   void searchRejectsCursorWithMismatchedFrom() {
-    String cursor = encodedCursor("a", "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
+    String cursor =
+        encodedCursor(List.of("a"), "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
     AuditEventQueryInput input =
         new AuditEventQueryInput(
             "a", "r", asc("2026-04-02"), asc("2026-04-30"), Order.ASC, 50, cursor);
@@ -246,7 +256,8 @@ class AuditEventServiceImplTest {
 
   @Test
   void searchRejectsCursorWithMismatchedTo() {
-    String cursor = encodedCursor("a", "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
+    String cursor =
+        encodedCursor(List.of("a"), "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
     AuditEventQueryInput input =
         new AuditEventQueryInput(
             "a", "r", asc("2026-04-01"), asc("2026-04-29"), Order.ASC, 50, cursor);
@@ -257,7 +268,8 @@ class AuditEventServiceImplTest {
 
   @Test
   void searchRejectsCursorWithMismatchedOrder() {
-    String cursor = encodedCursor("a", "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
+    String cursor =
+        encodedCursor(List.of("a"), "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
     AuditEventQueryInput input =
         new AuditEventQueryInput(
             "a", "r", asc("2026-04-01"), asc("2026-04-30"), Order.DESC, 50, cursor);
@@ -267,11 +279,98 @@ class AuditEventServiceImplTest {
   }
 
   @Test
-  void searchNormalizesBlankActorAndResourceBeforeCursorComparison() {
-    String cursor = encodedCursor(null, null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
+  void searchRejectsCursorWithMismatchedActorList() {
+    String cursor =
+        encodedCursor(
+            List.of("alice", "bob"), "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
     AuditEventQueryInput input =
         new AuditEventQueryInput(
-            "  ", "", asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, cursor);
+            "alice,carol", "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, cursor);
+    assertThatThrownBy(() -> service.search(input))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("cursor does not match");
+  }
+
+  @Test
+  void searchTreatsNullActorParamAsNoFilter() {
+    String cursor = encodedCursor(List.of(), null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            null, "", asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, cursor);
+
+    AuditEventQueryResult result = service.search(input);
+    assertThat(result.items()).isEmpty();
+  }
+
+  @Test
+  void searchRejectsBlankActorParameter() {
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            "", null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null);
+    assertThatThrownBy(() -> service.search(input))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("actor");
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void searchRejectsWhitespaceOnlyActorParameter() {
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            "   ", null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null);
+    assertThatThrownBy(() -> service.search(input))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("actor");
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void searchRejectsActorListWithBlankEntry() {
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            "alice,,bob", null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null);
+    assertThatThrownBy(() -> service.search(input))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("blank entries");
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void searchRejectsTrailingCommaActorList() {
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            "alice,bob,", null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null);
+    assertThatThrownBy(() -> service.search(input))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("blank entries");
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void searchRejectsCommaOnlyActorList() {
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            ",,", null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null);
+    assertThatThrownBy(() -> service.search(input))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("blank entries");
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void searchAcceptsCursorWhenRequestActorListMatchesAfterNormalization() {
+    String cursor =
+        encodedCursor(
+            List.of("alice", "bob"), "r", asc("2026-04-01"), asc("2026-04-30"), Order.ASC);
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            " BOB , alice , ALICE ",
+            "r",
+            asc("2026-04-01"),
+            asc("2026-04-30"),
+            Order.ASC,
+            50,
+            cursor);
 
     AuditEventQueryResult result = service.search(input);
     assertThat(result.items()).isEmpty();
@@ -285,10 +384,67 @@ class AuditEventServiceImplTest {
     assertThatThrownBy(() -> service.search(input)).isInstanceOf(IllegalArgumentException.class);
   }
 
-  private String encodedCursor(String actor, String resource, Instant from, Instant to, Order o) {
+  @Test
+  void searchRejectsActorListAbove10DistinctValues() {
+    String input11 = "a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11";
+    AuditEventQueryInput input =
+        new AuditEventQueryInput(
+            input11, null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null);
+    assertThatThrownBy(() -> service.search(input))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("actor list");
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void searchAcceptsExactly10DistinctActors() {
+    String input10 = "a1,a2,a3,a4,a5,a6,a7,a8,a9,a10";
+    when(repository.searchAsc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
+        .thenReturn(List.of());
+
+    AuditEventQueryResult result =
+        service.search(
+            new AuditEventQueryInput(
+                input10, null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null));
+
+    assertThat(result.items()).isEmpty();
+  }
+
+  @Test
+  void searchNormalizesActorListDedupesTrimsAndLowercasesBeforeCapCheck() {
+    String input = " Alice , BOB , alice , bob , CAROL ";
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<String>> captor = ArgumentCaptor.forClass(List.class);
+    when(repository.searchAsc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
+        .thenReturn(List.of());
+
+    service.search(
+        new AuditEventQueryInput(
+            input, null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null));
+
+    verify(repository)
+        .searchAsc(captor.capture(), any(), any(), any(), any(), any(), any(), any(Limit.class));
+    assertThat(captor.getValue()).containsExactly("alice", "bob", "carol");
+  }
+
+  @Test
+  void searchPassesNullActorsParamWhenFilterAbsent() {
+    when(repository.searchAsc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
+        .thenReturn(List.of());
+
+    service.search(
+        new AuditEventQueryInput(
+            null, null, asc("2026-04-01"), asc("2026-04-30"), Order.ASC, 50, null));
+
+    verify(repository)
+        .searchAsc(isNull(), any(), any(), any(), any(), any(), any(), any(Limit.class));
+  }
+
+  private String encodedCursor(
+      List<String> actors, String resource, Instant from, Instant to, Order o) {
     AuditEventQuery prior =
         new AuditEventQuery(
-            actor,
+            actors,
             resource,
             from,
             to,
@@ -383,7 +539,7 @@ class AuditEventServiceImplTest {
     UUID lastId = UUID.fromString("11111111-1111-1111-1111-111111111111");
     AuditEventQuery prior =
         new AuditEventQuery(
-            null, null, from, to, Order.ASC, 50, java.util.Optional.empty(), tStart);
+            List.of(), null, from, to, Order.ASC, 50, java.util.Optional.empty(), tStart);
     String cursor = cursorCodec.encode(lastTs, lastId, prior);
     when(repository.searchAsc(any(), any(), any(), any(), any(), any(), any(), any(Limit.class)))
         .thenReturn(List.of());
@@ -409,7 +565,7 @@ class AuditEventServiceImplTest {
     Instant tStart = Instant.parse("2026-05-01T00:00:00Z");
     AuditEventQuery prior =
         new AuditEventQuery(
-            null, null, from, to, Order.ASC, 50, java.util.Optional.empty(), tStart);
+            List.of(), null, from, to, Order.ASC, 50, java.util.Optional.empty(), tStart);
     String inboundCursor = cursorCodec.encode(asc("2026-04-05"), UUID.randomUUID(), prior);
     AuditEvent e1 = event(asc("2026-04-10"));
     AuditEvent e2 = event(asc("2026-04-11"));

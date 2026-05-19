@@ -14,7 +14,7 @@ Implements [`requirements.md`](./requirements.md).
 |------------|----------|---------|----------------------------------------|
 | `from`     | yes      | —       | ISO-8601, inclusive                    |
 | `to`       | yes      | —       | ISO-8601, exclusive                    |
-| `actor`    | no       | —       | case-insensitive exact match           |
+| `actor`    | no       | —       | case-insensitive exact match; comma-separated list, max 10 distinct values after trim + dedupe |
 | `resource` | no       | —       | case-insensitive exact match           |
 | `order`    | no       | `asc`   | `asc` or `desc`                        |
 | `limit`    | no       | `50`    | 1–500                                  |
@@ -22,23 +22,27 @@ Implements [`requirements.md`](./requirements.md).
 
 **Response 200** — `{ "items": [...AuditEventResponse], "nextCursor": "<string>" | null }`
 
-**Response 400** — existing `ApiExceptionHandler` body. Triggers: missing/invalid `from`/`to`, `from >= to`, `to - from > 90d`, `limit` out of range, bad `order`, malformed cursor, cursor whose embedded query differs from the current request.
+**Error responses.** All errors share the existing `ApiExceptionHandler` body. Status code is selected by whether the offending value was missing or invalid:
+
+- **Response 400 — value not provided.** Required parameter absent (`from`, `to`), or `actor` parameter present but empty/whitespace-only (treated as "no value supplied"). On POST `/audit-events`, a missing JSON field that the schema declares `@NotNull` (e.g. `outcome` key absent) also returns 400.
+- **Response 422 — value supplied but invalid.** Malformed ISO-8601 in `from`/`to`, `from >= to`, `to - from > 90d`, `limit` out of `[1, 500]`, unknown `order`, malformed cursor (bad base64/JSON/missing fields), cursor whose embedded query differs from the current request, more than 10 distinct actors after trim + dedupe, `actor` list with a blank entry between commas. On POST `/audit-events`, a present-but-blank string field (e.g. `"actor": ""`) also returns 422.
 
 ## 3. Query & pagination
 
-**Why keyset over offset.** Offset pagination (`LIMIT n OFFSET m`) makes the DB scan and discard `m` rows for every page, so cost grows linearly with depth — bad fit for audit walks that may traverse millions of events. Offset also breaks the exactly-once guarantee from `requirements.md` US-3 AC3: rows shift under the offset window if anything inserts or reorders mid-walk, producing duplicates or skips. Keyset on `(timestamp, id)` is index-backed, O(log n) per page regardless of depth, and gives stable cursor semantics — combined with the snapshot boundary (`timestamp <= T_start`, see below), each event in the result set is returned exactly once. Cursor stays opaque per US-3 AC4.
+**Why keyset over offset.** Offset pagination (`LIMIT n OFFSET m`) makes the DB scan and discard `m` rows for every page, so cost grows linearly with depth — bad fit for audit walks that may traverse millions of events. Offset also breaks the exactly-once guarantee from `requirements.md` AC-3.8: rows shift under the offset window if anything inserts or reorders mid-walk, producing duplicates or skips. Keyset on `(timestamp, id)` is index-backed, O(log n) per page regardless of depth, and gives stable cursor semantics — combined with the snapshot boundary (`timestamp <= T_start`, see below), each event in the result set is returned exactly once. Cursor stays opaque per AC-3.9 / AC-3.10.
 
-- Filter: `lower(actor) = lower(:actor)` / `lower(resource) = lower(:resource)` when present; `timestamp >= :from AND timestamp < :to` always; **plus snapshot boundary `timestamp <= :T_start`**.
+- Filter: `lower(actor) IN (lower(:a1), …, lower(:aN))` when an actor list is present (N ≤ 10) / `lower(resource) = lower(:resource)` when present; `timestamp >= :from AND timestamp < :to` always; **plus snapshot boundary `timestamp <= :T_start`**.
 - Snapshot boundary `T_start`:
   - First request of a query (no cursor): server sets `T_start = Instant.now()`.
   - Subsequent requests: server decodes `T_start` from the cursor and reuses it for every page of the same query.
-  - Effect: events written after the first request are excluded from this query and only become visible to a *new* query. Implements `requirements.md` US-3 AC3.
+  - Effect: events written after the first request are excluded from this query and only become visible to a *new* query. Implements `requirements.md` AC-3.5 / AC-3.6 / AC-3.7 / AC-3.8.
+- Freshness (`requirements.md` AC-1.9): a committed event with `timestamp <= T_start` is included in the result set on the very next query — read-after-commit visibility falls out of running the snapshot query at `READ COMMITTED` against the append-only table. No write-side buffering or async indexing is introduced.
 - Sort: `timestamp <order>, id <order>` — strict total order, deterministic.
 - Cursor payload (JSON, then base64url):
   ```
-  { ts, id, actor, resource, from, to, order, tStart }
+  { ts, id, actors, resource, from, to, order, tStart }
   ```
-  Binds position **and** the originating query **and** the snapshot. On next request, server decodes and rejects with `400` if any of `actor`/`resource`/`from`/`to`/`order` differ from the current request. `tStart` is propagated, not validated against the request (client never supplies it).
+  `actors` is a sorted list of the lower-cased, deduped actor names from the originating request (empty when no actor filter was supplied). Binds position **and** the originating query **and** the snapshot. On next request, server decodes and rejects with `400` if any of `actors`/`resource`/`from`/`to`/`order` differ from the current request (the request's actor list is normalized — trim, lower-case, dedupe, sort — before comparison). `tStart` is propagated, not validated against the request (client never supplies it).
 - Keyset predicate (asc): `timestamp > :ts OR (timestamp = :ts AND id > :id)`. Reverse comparators for `desc`.
 - Exactly-once iteration follows from: append-only invariant + strict keyset comparison + total order on `(timestamp, id)` + snapshot boundary `timestamp <= T_start` (prevents events appended mid-walk from entering the result set).
 
@@ -54,13 +58,15 @@ CREATE INDEX idx_audit_events_ts_id          ON audit_events (timestamp, id);
 
 Covers the three filter shapes (actor + range, resource + range, range only) and supports the cursor.
 
+**Multi-actor IN-list — why no new index.** For an `IN (lower(:a1), …, lower(:aN))` predicate with `N ≤ 10`, the Postgres planner uses `idx_audit_events_actor_ts_id` either as a `BitmapOr` over per-value bitmap index scans or as a parameterized index range scan looped over each value; in both shapes the leading `lower(actor)` column resolves the membership test and the trailing `(timestamp, id)` columns serve the range predicate and keyset ordering. A new index (e.g. on `actor` alone, a hash index, or a GIN array index) would either drop the `(timestamp, id)` suffix — forcing a re-sort and a separate filter step that defeats keyset pagination — or duplicate the existing index for no measurable gain at this list size, while adding write-amplification on the hot append path. The actor-list cap of 10 is sized to stay within the regime where this planner shape remains cheap.
+
 ## 5. Component design
 
-Layering per `AGENTS.md`.
+Layering per `AGENTS.md` (see §7 for the full invariants map).
 
 **`api`**
 
-- `AuditEventQueryRequest` — record bound from query string with jakarta validation: `@NotNull from/to`, `@Min(1) @Max(500) limit`, `Order` enum, optional `actor`/`resource`/`cursor`.
+- `AuditEventQueryRequest` — record bound from query string with jakarta validation: `@NotNull from/to`, `@Min(1) @Max(500) limit`, `Order` enum, optional `actor` (raw comma-separated string from the query string, normalized in the service layer)/`resource`/`cursor`.
 - `AuditEventPage` — record `{ List<AuditEventResponse> items, String nextCursor }`.
 - `AuditEventController.search(@Valid AuditEventQueryRequest)` → calls `service.search(...)`.
 
@@ -68,8 +74,8 @@ Layering per `AGENTS.md`.
 
 - `AuditEventQuery` — value object carrying normalized inputs + decoded cursor.
 - `AuditEventServiceImpl.search`:
-  1. Normalize blank `actor`/`resource` to `null`.
-  2. Semantic checks (throw `IllegalArgumentException`): `from < to`, window ≤ 90d, cursor decodes and matches query.
+  1. Normalize `actor`: when the parameter is omitted (`null`) → no actor filter. When present but entirely blank → `IllegalArgumentException` (→ 400). Otherwise split on `,`, trim each piece, reject any blank entry with `IllegalArgumentException` (→ 400), lower-case, dedupe, sort. Normalize blank `resource` to `null`.
+  2. Semantic checks (throw `IllegalArgumentException`): `from < to`, window ≤ 90d, normalized actor list size ≤ 10, cursor decodes and matches query.
   3. Resolve `T_start`: if cursor present → use `tStart` from cursor; else → `Instant.now()`.
   4. Call repository with `limit + 1`, passing `T_start` as upper bound alongside `from`/`to`.
   5. If result size > `limit`, trim and build `nextCursor` from the last kept row + the query + `T_start`; else `nextCursor = null`.
@@ -88,16 +94,19 @@ Each method takes a `org.springframework.data.domain.Limit` parameter; the servi
 
 **Validation split**
 
-| Layer    | Checks                                                              |
-|----------|---------------------------------------------------------------------|
-| `api`    | format, required `from`/`to`, `limit` range, `order` enum            |
-| `service`| `from < to`, window ≤ 90d, cursor decode + cursor-vs-query match     |
+| Layer    | Checks                                                              | Failure → status |
+|----------|---------------------------------------------------------------------|-------------------|
+| `api`    | required `from`/`to` present                                        | 400 |
+| `api`    | ISO-8601 format, `limit` in `[1, 500]`, `order` enum value           | 422 |
+| `service`| `actor` parameter present but blank                                  | 400 (`MissingRequestValueException`) |
+| `service`| `from < to`, window ≤ 90d, actor list ≤ 10 distinct values after trim + dedupe, no blank entry inside list, cursor decode + cursor-vs-query match | 422 (`IllegalArgumentException`) |
 
 ## 6. Testing strategy
 
 **Unit (`service`)**
 
-- Reject `from >= to`, window > 90d, mismatched cursor.
+- Reject `from >= to`, window > 90d, mismatched cursor, actor list with > 10 distinct values after normalization, `actor` parameter present but entirely blank, actor list with a blank entry between commas.
+- Actor list normalization: trim, reject blanks (whole value or any entry), lower-case, dedupe, sort; duplicates are collapsed before the 10-cap is enforced.
 - `limit + 1` probing trims correctly; `nextCursor` null when single page.
 - Asc/desc dispatched to correct repository method.
 - `CursorCodec` round-trip; rejects malformed input.
@@ -106,6 +115,40 @@ Each method takes a `org.springframework.data.domain.Limit` parameter; the servi
 
 - Happy paths: actor + range, resource + range, range only, both orders.
 - Case-insensitive match.
-- `400` cases: missing `from`/`to`, `from >= to`, window > 90d, `limit` out of range, bad cursor, cursor with mismatched filters/order.
+- `400` cases (value not provided): missing `from`/`to`, `actor` parameter present but empty/whitespace-only.
+- `422` cases (value supplied but invalid): `from >= to`, window > 90d, `limit` out of range, bad cursor, cursor with mismatched filters/order, actor list with > 10 distinct values, blank entry inside the actor list, malformed ISO-8601, unknown `order`.
+- Multi-actor happy path: `?actor=a1,a2,a3` returns the union of events whose actor matches any list entry (case-insensitive); pagination, ordering, and snapshot guarantees match the single-actor case.
 - Pagination invariants: union of pages = unpaged query, no duplicates, no gaps — including with concurrent appends inside the range. Events appended after the first page must not appear in any later page of the same cursor walk (snapshot boundary `T_start`).
 - Ties on `timestamp` resolved by `id` consistently across page boundaries.
+
+## 7. AGENTS.md alignment
+
+How each `AGENTS.md` invariant, architectural rule, and feedback-loop requirement is honored by this design.
+
+### Invariants
+
+| `AGENTS.md` invariant | Honored by | Evidence in this design |
+|-----------------------|------------|-------------------------|
+| Events append-only — no updates, no deletes | Read-only endpoint; no write paths added. | §2 contract is `GET /audit-events` only — no PUT/PATCH/DELETE; §4 migration `V3__query_api_indexes.sql` is index-only, no schema or data mutation; `tasks.md` T1 DoD: "no `INSERT`/`UPDATE`/`DELETE` on `audit_events`"; requirements AC-1.13. |
+| Event `timestamp` set only by the server | Query consumes `timestamp` as written; server-side `T_start` derives from `Instant.now()`, never from client input. | §3 "First request of a query (no cursor): server sets `T_start = Instant.now()`"; cursor `tStart` field is propagated only, never validated against the request (§3 cursor payload note). |
+| `actor` is required for event | Out of scope for the read path — write-side guarantee. Read path treats `actor` as an optional **filter**; omitted = "no filter", not a missing field. | §2 `actor` row "Required: no"; AC-1.7 (omitted parameter accepted); query never asserts non-null `actor` on stored rows. |
+| Spec changes need passing `spec-self-eval` | Process invariant — enforced by stop hook, not by this design. | N/A in design content; honored by running the skill after spec edits. |
+
+### Architectural rules
+
+| `AGENTS.md` rule | Honored by |
+|------------------|------------|
+| Dependency direction (`api → service/domain`, `service → domain/repository`, `repository → domain`) | §5 packages: `AuditEventQueryRequest`/`AuditEventController` in `api`; `AuditEventQuery`/`AuditEventServiceImpl`/`CursorCodec` in `service`; `searchAsc/searchDesc` in `repository`. No reverse imports. |
+| REST logic in `api` only | §5 Validation split: required-param presence + format/range checks live in `api`; semantic checks live in `service`. |
+| Business logic in `service` only | §5 `service` owns actor normalization, cursor decode, `T_start`, `from < to`, 90d window, actor-cap 10. |
+| Storage logic in `repository` only | §3/§5 keyset SQL (`searchAsc`/`searchDesc`), `LIMIT + 1` probing, `IN`-list binding all in `repository`. |
+| All code covered with tests | §6 Testing strategy: unit (`service`, `CursorCodec`) + integration (Spring + Testcontainers Postgres) covering every AC. |
+| No new libraries without strong necessity | §3/§5 reuse existing Spring `NamedParameterJdbcTemplate`/JPQL, jakarta validation, existing `ApiExceptionHandler`. No new deps. Cursor uses JDK base64 + Jackson (already in classpath). |
+| Deterministic sort with tiebreaker for any list endpoint | §3 "Sort: `timestamp <order>, id <order>` — strict total order, deterministic"; AC-2.2 covered by §6 integration test. |
+
+### Feedback loop
+
+| `AGENTS.md` requirement | Honored by |
+|-------------------------|------------|
+| Run relevant unit + integration tests after any code change | `tasks.md` per-task DoD lists the test additions; T6 owns service+controller tests; T7 owns full integration sweep. |
+| Schema / Flyway changes apply on clean DB and don't break existing data access | §4 `V3` migration is purely additive (three indexes, no data writes); `tasks.md` T4 DoD: "Migration creates all three indexes" + "Existing write-path behavior remains unchanged"; T7 runs full suite on migrated DB. |

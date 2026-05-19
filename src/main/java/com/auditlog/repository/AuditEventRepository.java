@@ -16,8 +16,7 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
   @Query(
       """
           select e from AuditEvent e
-          where (cast(:actor    as string) is null
-                 or lower(e.actor)    = lower(cast(:actor    as string)))
+          where (:actors is null or lower(e.actor) in :actors)
             and (cast(:resource as string) is null
                  or lower(e.resource) = lower(cast(:resource as string)))
             and e.timestamp >= :from
@@ -29,7 +28,7 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
           order by e.timestamp asc, e.id asc
           """)
   List<AuditEvent> searchAsc(
-      @Param("actor") String actor,
+      @Param("actors") List<String> actors,
       @Param("resource") String resource,
       @Param("from") Instant from,
       @Param("to") Instant to,
@@ -41,8 +40,7 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
   @Query(
       """
           select e from AuditEvent e
-          where (cast(:actor    as string) is null
-                 or lower(e.actor)    = lower(cast(:actor    as string)))
+          where (:actors is null or lower(e.actor) in :actors)
             and (cast(:resource as string) is null
                  or lower(e.resource) = lower(cast(:resource as string)))
             and e.timestamp >= :from
@@ -54,7 +52,7 @@ public interface AuditEventRepository extends Repository<AuditEvent, UUID> {
           order by e.timestamp desc, e.id desc
           """)
   List<AuditEvent> searchDesc(
-      @Param("actor") String actor,
+      @Param("actors") List<String> actors,
       @Param("resource") String resource,
       @Param("from") Instant from,
       @Param("to") Instant to,

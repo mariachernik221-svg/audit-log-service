@@ -20,6 +20,7 @@ and observability. It is used by compliance officers, SREs, and security analyst
 * events append-only: no updates, no deletes
 * event timestamp is set only by the server
 * actor is required for event
+* changes is specs can't be accepted without passed `spec-self-eval` skill (run automatically as stop hook)
 
 ## Architectural Rules
 

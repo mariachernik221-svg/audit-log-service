@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -21,14 +22,14 @@ class CursorCodecTest {
     Instant tStart = Instant.parse("2026-05-01T08:00:00Z");
     AuditEventQuery query =
         new AuditEventQuery(
-            "alice", "project:42", from, to, Order.DESC, 50, Optional.empty(), tStart);
+            List.of("alice"), "project:42", from, to, Order.DESC, 50, Optional.empty(), tStart);
 
     String encoded = codec.encode(ts, id, query);
     CursorCodec.DecodedCursor decoded = codec.decode(encoded);
 
     assertThat(decoded.ts()).isEqualTo(ts);
     assertThat(decoded.id()).isEqualTo(id);
-    assertThat(decoded.actor()).isEqualTo("alice");
+    assertThat(decoded.actors()).containsExactly("alice");
     assertThat(decoded.resource()).isEqualTo("project:42");
     assertThat(decoded.from()).isEqualTo(from);
     assertThat(decoded.to()).isEqualTo(to);
@@ -37,12 +38,12 @@ class CursorCodecTest {
   }
 
   @Test
-  void roundTripPreservesNullActorAndResource() {
+  void roundTripPreservesEmptyActorsAndNullResource() {
     Instant ts = Instant.parse("2026-04-15T12:34:56Z");
     UUID id = UUID.randomUUID();
     AuditEventQuery query =
         new AuditEventQuery(
-            null,
+            List.of(),
             null,
             Instant.parse("2026-04-01T00:00:00Z"),
             Instant.parse("2026-04-30T00:00:00Z"),
@@ -53,8 +54,28 @@ class CursorCodecTest {
 
     CursorCodec.DecodedCursor decoded = codec.decode(codec.encode(ts, id, query));
 
-    assertThat(decoded.actor()).isNull();
+    assertThat(decoded.actors()).isEmpty();
     assertThat(decoded.resource()).isNull();
+  }
+
+  @Test
+  void roundTripPreservesMultiActorList() {
+    Instant ts = Instant.parse("2026-04-15T12:34:56Z");
+    UUID id = UUID.randomUUID();
+    AuditEventQuery query =
+        new AuditEventQuery(
+            List.of("alice", "bob", "carol"),
+            null,
+            Instant.parse("2026-04-01T00:00:00Z"),
+            Instant.parse("2026-04-30T00:00:00Z"),
+            Order.ASC,
+            50,
+            Optional.empty(),
+            Instant.parse("2026-05-01T00:00:00Z"));
+
+    CursorCodec.DecodedCursor decoded = codec.decode(codec.encode(ts, id, query));
+
+    assertThat(decoded.actors()).containsExactly("alice", "bob", "carol");
   }
 
   @Test
@@ -103,9 +124,23 @@ class CursorCodecTest {
     String partial =
         java.util.Base64.getUrlEncoder()
             .withoutPadding()
-            .encodeToString("{\"actor\":\"alice\"}".getBytes());
+            .encodeToString("{\"actors\":[\"alice\"]}".getBytes());
     assertThatThrownBy(() -> codec.decode(partial))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("missing required fields");
+  }
+
+  @Test
+  void decodeRejectsLegacyCursorWithoutActorsField() {
+    String legacy =
+        java.util.Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(
+                ("{\"ts\":\"2026-04-15T12:34:56Z\",\"id\":\"a1b2c3d4-1111-2222-3333-444455556666\","
+                        + "\"actor\":\"alice\",\"resource\":null,"
+                        + "\"from\":\"2026-04-01T00:00:00Z\",\"to\":\"2026-04-30T00:00:00Z\","
+                        + "\"order\":\"ASC\",\"tStart\":\"2026-05-01T00:00:00Z\"}")
+                    .getBytes());
+    assertThatThrownBy(() -> codec.decode(legacy)).isInstanceOf(IllegalArgumentException.class);
   }
 }

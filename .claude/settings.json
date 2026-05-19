@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/01-user-prompt-submit-spec-snapshot.py",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/02-stop-spec-self-eval-gate.py",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}

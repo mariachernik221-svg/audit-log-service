@@ -172,55 +172,289 @@ class QueryApiIntegrationTest {
   }
 
   @Test
-  void fromEqualToToReturns400() throws Exception {
+  void fromEqualToToReturns422() throws Exception {
     mockMvc
         .perform(get("/audit-events").param("from", FROM.toString()).param("to", FROM.toString()))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isUnprocessableEntity());
   }
 
   @Test
-  void windowGreaterThan90DaysReturns400() throws Exception {
+  void windowGreaterThan90DaysReturns422() throws Exception {
     Instant tooFar = FROM.plus(java.time.Duration.ofDays(91));
     mockMvc
         .perform(get("/audit-events").param("from", FROM.toString()).param("to", tooFar.toString()))
+        .andExpect(status().isUnprocessableEntity());
+  }
+
+  @Test
+  void multiActorHappyPathReturnsUnionCaseInsensitive() throws Exception {
+    AuditEvent eAlice = seed("Alice", "r", Instant.parse("2026-04-02T00:00:00Z"));
+    AuditEvent eBob = seed("BOB", "r", Instant.parse("2026-04-03T00:00:00Z"));
+    seed("carol", "r", Instant.parse("2026-04-04T00:00:00Z"));
+    flush();
+
+    MvcResult result =
+        mockMvc
+            .perform(
+                get("/audit-events")
+                    .param("from", FROM.toString())
+                    .param("to", TO.toString())
+                    .param("actor", "alice,BOB")
+                    .param("order", "ASC"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items.length()").value(2))
+            .andReturn();
+    Page page = objectMapper.readValue(result.getResponse().getContentAsString(), Page.class);
+    List<String> ids = page.items().stream().map(m -> (String) m.get("id")).toList();
+    assertThat(ids).containsExactly(eAlice.getId().toString(), eBob.getId().toString());
+  }
+
+  @Test
+  void multiActorListTrimsAndDedupesBeforeMatching() throws Exception {
+    AuditEvent eAlice = seed("alice", "r", Instant.parse("2026-04-02T00:00:00Z"));
+    flush();
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", FROM.toString())
+                .param("to", TO.toString())
+                .param("actor", "  alice ,Alice ,ALICE  "))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items.length()").value(1))
+        .andExpect(jsonPath("$.items[0].id").value(eAlice.getId().toString()));
+  }
+
+  @Test
+  void actorListAbove10DistinctReturns422() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", FROM.toString())
+                .param("to", TO.toString())
+                .param("actor", "a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11"))
+        .andExpect(status().isUnprocessableEntity());
+  }
+
+  @Test
+  void multiActorHappyPathWithThreeActors() throws Exception {
+    AuditEvent eAlice = seed("alice", "r", Instant.parse("2026-04-02T00:00:00Z"));
+    AuditEvent eBob = seed("bob", "r", Instant.parse("2026-04-03T00:00:00Z"));
+    AuditEvent eCarol = seed("carol", "r", Instant.parse("2026-04-04T00:00:00Z"));
+    seed("dave", "r", Instant.parse("2026-04-05T00:00:00Z"));
+    flush();
+
+    MvcResult result =
+        mockMvc
+            .perform(
+                get("/audit-events")
+                    .param("from", FROM.toString())
+                    .param("to", TO.toString())
+                    .param("actor", "alice,bob,carol")
+                    .param("order", "ASC"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items.length()").value(3))
+            .andReturn();
+    Page page = objectMapper.readValue(result.getResponse().getContentAsString(), Page.class);
+    List<String> ids = page.items().stream().map(m -> (String) m.get("id")).toList();
+    assertThat(ids)
+        .containsExactly(
+            eAlice.getId().toString(), eBob.getId().toString(), eCarol.getId().toString());
+  }
+
+  @Test
+  void multiActorHappyPathWithTenActorsHitsAllAndExcludesEleventh() throws Exception {
+    List<AuditEvent> targets = new ArrayList<>();
+    for (int i = 1; i <= 10; i++) {
+      targets.add(seed("actor10-" + i, "r", Instant.parse("2026-04-02T00:00:00Z").plusSeconds(i)));
+    }
+    seed("actor10-11", "r", Instant.parse("2026-04-02T00:00:10Z"));
+    flush();
+
+    String actors =
+        "actor10-1,actor10-2,actor10-3,actor10-4,actor10-5,actor10-6,actor10-7,actor10-8,actor10-9,actor10-10";
+
+    MvcResult result =
+        mockMvc
+            .perform(
+                get("/audit-events")
+                    .param("from", FROM.toString())
+                    .param("to", TO.toString())
+                    .param("actor", actors)
+                    .param("order", "ASC")
+                    .param("limit", "50"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items.length()").value(10))
+            .andReturn();
+    Page page = objectMapper.readValue(result.getResponse().getContentAsString(), Page.class);
+    Set<String> ids =
+        page.items().stream()
+            .map(m -> (String) m.get("id"))
+            .collect(java.util.stream.Collectors.toSet());
+    Set<String> expected =
+        targets.stream()
+            .map(e -> e.getId().toString())
+            .collect(java.util.stream.Collectors.toSet());
+    assertThat(ids).isEqualTo(expected);
+  }
+
+  @Test
+  void multiActorKeysetPaginationUnionEqualsUnpagedNoDupsNoGaps() throws Exception {
+    String actorAlice = "kp-alice";
+    String actorBob = "kp-bob";
+    String actorCarol = "kp-carol";
+    List<UUID> expected = new ArrayList<>();
+    for (int i = 0; i < 5; i++) {
+      expected.add(
+          seed(actorAlice, "r", Instant.parse("2026-04-02T00:00:00Z").plusSeconds(i * 3L)).getId());
+      expected.add(
+          seed(actorBob, "r", Instant.parse("2026-04-02T00:00:01Z").plusSeconds(i * 3L)).getId());
+      expected.add(
+          seed(actorCarol, "r", Instant.parse("2026-04-02T00:00:02Z").plusSeconds(i * 3L)).getId());
+    }
+    seed("other", "r", Instant.parse("2026-04-02T00:01:00Z"));
+    flush();
+
+    String actorList = actorAlice + "," + actorBob + "," + actorCarol;
+
+    Page unpaged = fetchPage(actorList, null, FROM, TO, "ASC", 50, null);
+    assertThat(unpaged.items()).hasSize(15);
+    assertThat(unpaged.nextCursor()).isNull();
+    List<String> unpagedIds = unpaged.items().stream().map(m -> (String) m.get("id")).toList();
+
+    List<String> paged = new ArrayList<>();
+    String cursor = null;
+    int pageSize = 4;
+    do {
+      Page p = fetchPage(actorList, null, FROM, TO, "ASC", pageSize, cursor);
+      p.items().stream().map(m -> (String) m.get("id")).forEach(paged::add);
+      cursor = p.nextCursor();
+    } while (cursor != null);
+
+    assertThat(paged).hasSize(15);
+    assertThat(paged).doesNotHaveDuplicates();
+    assertThat(paged).isEqualTo(unpagedIds);
+    Set<String> pagedSet = new HashSet<>(paged);
+    Set<String> expectedSet =
+        expected.stream().map(UUID::toString).collect(java.util.stream.Collectors.toSet());
+    assertThat(pagedSet).isEqualTo(expectedSet);
+  }
+
+  @Test
+  void emptyActorParameterReturns400() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", FROM.toString())
+                .param("to", TO.toString())
+                .param("actor", ""))
         .andExpect(status().isBadRequest());
   }
 
   @Test
-  void limitBelowMinReturns400() throws Exception {
+  void whitespaceOnlyActorParameterReturns400() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", FROM.toString())
+                .param("to", TO.toString())
+                .param("actor", "   "))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void actorListWithBlankEntryReturns422() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", FROM.toString())
+                .param("to", TO.toString())
+                .param("actor", "alice,,bob"))
+        .andExpect(status().isUnprocessableEntity());
+  }
+
+  @Test
+  void actorListWithTrailingCommaReturns422() throws Exception {
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", FROM.toString())
+                .param("to", TO.toString())
+                .param("actor", "alice,bob,"))
+        .andExpect(status().isUnprocessableEntity());
+  }
+
+  @Test
+  void omittedActorParameterStillAccepted() throws Exception {
+    seed("anybody", "r", Instant.parse("2026-04-02T00:00:00Z"));
+    flush();
+
+    mockMvc
+        .perform(get("/audit-events").param("from", FROM.toString()).param("to", TO.toString()))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void cursorWithDifferentActorListReturns422() throws Exception {
+    String actorList = "alice,bob";
+    seed("alice", "r", Instant.parse("2026-04-02T00:00:00Z"));
+    seed("bob", "r", Instant.parse("2026-04-03T00:00:00Z"));
+    flush();
+
+    Page first = fetchPage("alice,bob", null, FROM, TO, "ASC", 1, null);
+    assertThat(first.nextCursor()).isNotNull();
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("from", FROM.toString())
+                .param("to", TO.toString())
+                .param("actor", "alice,carol")
+                .param("order", "ASC")
+                .param("limit", "1")
+                .param("cursor", first.nextCursor()))
+        .andExpect(status().isUnprocessableEntity());
+
+    // sanity: original actor list keeps walking
+    Page second = fetchPage(actorList, null, FROM, TO, "ASC", 10, first.nextCursor());
+    assertThat(second.items()).isNotEmpty();
+  }
+
+  @Test
+  void limitBelowMinReturns422() throws Exception {
     mockMvc
         .perform(
             get("/audit-events")
                 .param("from", FROM.toString())
                 .param("to", TO.toString())
                 .param("limit", "0"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isUnprocessableEntity());
   }
 
   @Test
-  void limitAboveMaxReturns400() throws Exception {
+  void limitAboveMaxReturns422() throws Exception {
     mockMvc
         .perform(
             get("/audit-events")
                 .param("from", FROM.toString())
                 .param("to", TO.toString())
                 .param("limit", "501"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isUnprocessableEntity());
   }
 
   @Test
-  void malformedCursorReturns400() throws Exception {
+  void malformedCursorReturns422() throws Exception {
     mockMvc
         .perform(
             get("/audit-events")
                 .param("from", FROM.toString())
                 .param("to", TO.toString())
                 .param("cursor", "%%%not-base64%%%"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isUnprocessableEntity());
   }
 
   @Test
-  void cursorWithMismatchedFiltersReturns400() throws Exception {
+  void cursorWithMismatchedFiltersReturns422() throws Exception {
     String actor = "actor-mismatch-1";
     for (int i = 0; i < 3; i++) {
       seed(actor, "r", Instant.parse("2026-04-0" + (i + 1) + "T00:00:00Z"));
@@ -239,7 +473,7 @@ class QueryApiIntegrationTest {
                 .param("order", "ASC")
                 .param("limit", "2")
                 .param("cursor", page.nextCursor()))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isUnprocessableEntity());
   }
 
   @Test
@@ -314,6 +548,22 @@ class QueryApiIntegrationTest {
     List<String> ids = p2.items().stream().map(m -> (String) m.get("id")).toList();
     assertThat(ids).contains(b.getId().toString());
     assertThat(ids).doesNotContain(appendedAfter.getId().toString());
+  }
+
+  @Test
+  void freshnessNewlyWrittenEventVisibleToNextQuery() throws Exception {
+    String actor = "actor-freshness";
+    Instant now = Instant.now();
+    Instant from = now.minusSeconds(3600);
+    Instant to = now.plus(java.time.Duration.ofDays(1));
+
+    AuditEvent justWritten = seed(actor, "r", now.minusSeconds(1));
+    flush();
+
+    Page page = fetchPage(actor, null, from, to, "ASC", 50, null);
+
+    List<String> ids = page.items().stream().map(m -> (String) m.get("id")).toList();
+    assertThat(ids).contains(justWritten.getId().toString());
   }
 
   // -- helpers --
